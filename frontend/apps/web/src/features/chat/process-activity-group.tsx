@@ -265,31 +265,86 @@ export function ProcessActivityGroup({
     setManualExpanded(undefined);
   }
   const expanded = manualExpanded ?? !settled;
+  const isComplete = settled || finalAnswerComplete || runCompleted || !isActive;
+  const statusLabel = isComplete ? "已完成分析" : "正在分析";
+
+  // 提取历史活动记录中的精确起始与结束时间，推导稳定的历史耗时（完全隔离当前系统时钟）
+  const itemStartTimes: number[] = [];
+  const itemEndTimes: number[] = [];
+  for (const item of items) {
+    if (item.kind === "assistant") {
+      if (typeof item.startedAt === "number" && item.startedAt > 0) {
+        itemStartTimes.push(item.startedAt);
+        if (typeof item.reasoningDuration === "number" && item.reasoningDuration > 0) {
+          itemEndTimes.push(item.startedAt + item.reasoningDuration * 1000);
+        }
+      }
+    } else {
+      if (typeof item.activity.startedAt === "number" && item.activity.startedAt > 0) {
+        itemStartTimes.push(item.activity.startedAt);
+      }
+      if (typeof item.activity.endedAt === "number" && item.activity.endedAt > 0) {
+        itemEndTimes.push(item.activity.endedAt);
+      }
+    }
+  }
+
+  // 历史或静态耗时：
+  // 1. 若外部传入明确的 durationMs (> 0)，严格使用该值；
+  // 2. 若有历史活动的起止时间跨度，严格使用历史记录的时间差；
+  // 3. 否则保底固定 1000ms（极速瞬间完成），绝对禁止使用 Date.now() - 历史时间戳 产生数小时虚假耗时。
+  const recordDurationMs = (() => {
+    if (typeof durationMs === "number" && durationMs > 0) {
+      return durationMs;
+    }
+    if (itemStartTimes.length > 0 && itemEndTimes.length > 0) {
+      const minStart = Math.min(...itemStartTimes);
+      const maxEnd = Math.max(...itemEndTimes);
+      if (maxEnd >= minStart) {
+        return Math.max(1000, maxEnd - minStart);
+      }
+    }
+    if (typeof durationMs === "number" && durationMs >= 0) {
+      return durationMs;
+    }
+    return 1000;
+  })();
+
   const [now, setNow] = useState(() => Date.now());
-  // 保持起始时间单调固定，从本轮运行开始（runStartedAt 或组件初始挂载时间）持续平滑计时，
-  // 绝不能在第一个思考或工具项加入时把起始时间向后推移导致计时重置为 0。
   const initialMountTimeRef = useRef<number>(runStartedAt ?? now);
   const lastRunStartedAtRef = useRef(runStartedAt);
   if (runStartedAt !== undefined && runStartedAt !== lastRunStartedAtRef.current) {
     lastRunStartedAtRef.current = runStartedAt;
     initialMountTimeRef.current = runStartedAt;
   }
-  const timeCandidates = [
-    initialMountTimeRef.current,
-    ...(runStartedAt ? [runStartedAt] : []),
-    ...items.map((item) => item.kind === "assistant" ? item.startedAt : item.activity.startedAt),
-  ].filter((t): t is number => typeof t === "number" && !Number.isNaN(t) && t > 0);
-  const startedAt = timeCandidates.length > 0 ? Math.min(...timeCandidates) : (runStartedAt ?? now);
-  const liveElapsed = Math.max(durationMs ?? 0, now - startedAt);
-  const [frozenElapsed, setFrozenElapsed] = useState<number | undefined>(undefined);
+
+  // 运行中的起始时间计算
+  const liveStartedAt = (() => {
+    const candidates = [
+      initialMountTimeRef.current,
+      ...(runStartedAt ? [runStartedAt] : []),
+      ...itemStartTimes,
+    ].filter((t): t is number => typeof t === "number" && !Number.isNaN(t) && t > 0);
+    return candidates.length > 0 ? Math.min(...candidates) : (runStartedAt ?? now);
+  })();
+
+  // 实时运行时的动态耗时
+  const liveElapsed = Math.max(recordDurationMs, now - liveStartedAt);
+
+  // 仅在真实运行中且刚转变为 settled 完成态时冻结当前的 liveElapsed；
+  // 若组件初次挂载时就已经是完成态（历史会话），直接严格锁定为 recordDurationMs，不可受当前时钟污染！
+  const [frozenElapsed, setFrozenElapsed] = useState<number | undefined>(() => {
+    return settled ? recordDurationMs : undefined;
+  });
+
   if (settled && frozenElapsed === undefined) {
-    setFrozenElapsed(liveElapsed);
+    setFrozenElapsed(recordDurationMs > 0 ? recordDurationMs : liveElapsed);
   } else if (!settled && frozenElapsed !== undefined) {
     setFrozenElapsed(undefined);
   }
-  const elapsedMs = settled ? (frozenElapsed ?? liveElapsed) : liveElapsed;
-  const isComplete = settled || finalAnswerComplete || runCompleted;
-  const statusLabel = isComplete ? "已完成分析" : "正在分析";
+
+  // 如果处于完成态，耗时必须永远固定且优先取已锁定的历史真实耗时，杜绝受切换会话或当前时间影响
+  const elapsedMs = isComplete ? (frozenElapsed ?? recordDurationMs) : liveElapsed;
 
   useEffect(() => {
     if (isComplete) return;

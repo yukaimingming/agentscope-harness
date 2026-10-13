@@ -306,9 +306,12 @@ function decisionFor(
   return decision.type === "approve" ? "approve" : "reject";
 }
 
-/** 格式化消息发送时间为 HH:mm 格式（例如 14:14） */
+/** 格式化消息发送时间为 HH:mm 格式（例如 14:14），若无有效时间戳返回空字符串，严禁使用 new Date() 当前时间覆盖历史 */
 function formatMessageTime(createdAt?: number): string {
-  const d = createdAt ? new Date(createdAt) : new Date();
+  if (!createdAt || typeof createdAt !== "number" || Number.isNaN(createdAt) || createdAt <= 0) {
+    return "";
+  }
+  const d = new Date(createdAt);
   const hours = String(d.getHours()).padStart(2, "0");
   const minutes = String(d.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;

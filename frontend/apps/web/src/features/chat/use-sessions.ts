@@ -230,10 +230,11 @@ export function useSessions(initialThreadId: string, defaultWorkspace: string = 
           ) {
             return prev;
           }
+          const hasNewMessages = state.messages.length !== current.messageCount;
           const updated: SessionSummary = {
             ...current,
             title: nextTitle,
-            updatedAt: now,
+            updatedAt: hasNewMessages ? now : (current.updatedAt ?? now),
             messageCount: state.messages.length,
             workspaceRoot: root,
             folderName: folder,
