@@ -16,9 +16,13 @@ public final class AguiEventType {
     public static final String TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT";
     public static final String TEXT_MESSAGE_END = "TEXT_MESSAGE_END";
 
-    public static final String REASONING_START = "REASONING_START";
-    public static final String REASONING_CONTENT = "REASONING_CONTENT";
-    public static final String REASONING_END = "REASONING_END";
+    public static final String REASONING_MESSAGE_START = "REASONING_MESSAGE_START";
+    public static final String REASONING_MESSAGE_CONTENT = "REASONING_MESSAGE_CONTENT";
+    public static final String REASONING_MESSAGE_END = "REASONING_MESSAGE_END";
+    // 兼容别名
+    public static final String REASONING_START = REASONING_MESSAGE_START;
+    public static final String REASONING_CONTENT = REASONING_MESSAGE_CONTENT;
+    public static final String REASONING_END = REASONING_MESSAGE_END;
 
     public static final String CUSTOM = "CUSTOM";
 

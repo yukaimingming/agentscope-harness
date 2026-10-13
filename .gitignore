@@ -9,8 +9,9 @@ Thumbs.db
 # 数据与密钥
 .data/
 .agentscope/state/
-.agentscope/workspace/*/events/
-.agentscope/workspace/*/large_tool_results/
+.agentscope/workspace/
+backend/.agentscope/workspace/
+backend/workspace/
 
 # IDE 与环境
 .idea/

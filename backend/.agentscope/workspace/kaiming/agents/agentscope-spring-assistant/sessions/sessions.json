@@ -3,6 +3,10 @@
     "test-session-001" : {
       "summary" : "transcript updated (2 entries)",
       "updatedAt" : "2026-10-13T12:31:57.230859400Z"
+    },
+    "b43ae39e-988f-4b0d-ba00-136f0a9d0938" : {
+      "summary" : "transcript updated (38 entries)",
+      "updatedAt" : "2026-10-13T12:54:27.237174600Z"
     }
   },
   "version" : 1

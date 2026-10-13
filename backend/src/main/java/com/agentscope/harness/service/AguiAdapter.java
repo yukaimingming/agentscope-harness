@@ -4,14 +4,12 @@ import com.agentscope.harness.model.*;
 import com.agentscope.harness.model.Activity.*;
 import com.agentscope.harness.model.FileDiff.DiffHunk;
 import com.agentscope.harness.model.FileDiff.DiffLine;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.core.event.*;
 import io.agentscope.core.message.ToolUseBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -21,6 +19,12 @@ import java.util.function.Consumer;
 
 /**
  * AgentScope 事件流到 AG-UI 协议的适配器。
+ * 完整对齐原项目（LangChain / Deep Agents UI）协议标准：
+ * 1. 思考流采用 REASONING_MESSAGE_START / CONTENT / END 独立事件；
+ * 2. 工具调用前后的文本识别为伴随过程说明，通过 deepagent:process-message 标记并在时间线中渲染；
+ * 3. 监听 ToolResultTextDeltaEvent 累积真实工具执行输出详情，并放入 ToolDetail.output；
+ * 4. 工具与文件卡片 ID 统一为 tool:<callId> 与 file:<callId>；
+ * 5. 自动捕获文件修改并生成行级 diff。
  */
 public class AguiAdapter {
 
@@ -33,17 +37,19 @@ public class AguiAdapter {
     private final String workspaceRoot;
 
     private boolean runStartedEmitted = false;
-    private boolean reasoningStarted = false;
-    private boolean reasoningEnded = false;
-    private final String reasoningMsgId;
 
-    private boolean textStarted = false;
-    private boolean textEnded = false;
-    private final String textMsgId;
+    // 当前思考流状态
+    private String openReasoningId = null;
+
+    // 当前文本流状态
+    private String openTextId = null;
+    private String lastTextId = null;
     private final StringBuilder fullAnswer = new StringBuilder();
 
+    // 工具调用与输出累积缓冲区
     private final Map<String, Activity> activities = new ConcurrentHashMap<>();
     private final Map<String, StringBuilder> toolArgBuffers = new ConcurrentHashMap<>();
+    private final Map<String, StringBuilder> toolOutputBuffers = new ConcurrentHashMap<>();
     private final Map<String, String> toolPreContents = new ConcurrentHashMap<>();
 
     private final long startedAt;
@@ -56,8 +62,6 @@ public class AguiAdapter {
         this.objectMapper = objectMapper;
         this.sseWriter = sseWriter;
         this.workspaceRoot = workspaceRoot;
-        this.reasoningMsgId = "msg-reasoning-" + UUID.randomUUID();
-        this.textMsgId = "msg-text-" + UUID.randomUUID();
         this.startedAt = System.currentTimeMillis();
     }
 
@@ -69,95 +73,178 @@ public class AguiAdapter {
                     "runId", runId,
                     "threadId", threadId
             ));
+
+            RunSnapshot snapshot = new RunSnapshot();
+            snapshot.setStatus("running");
+            snapshot.setRunId(runId);
+            snapshot.setThreadId(threadId);
+            snapshot.setStartedAt(startedAt);
+            snapshot.setProgressNote("智能体已就绪，正在分析任务…");
+            emitRunSnapshot(snapshot);
         }
     }
 
     /**
-     * 处理 AgentScope 事件。
+     * 处理 AgentScope 事件流。
      */
     public synchronized void onAgentEvent(AgentEvent event) {
         emitRunStarted();
 
-        if (event instanceof ThinkingBlockDeltaEvent e) {
+        if (event instanceof ThinkingBlockStartEvent) {
+            startReasoning();
+        } else if (event instanceof ThinkingBlockDeltaEvent e) {
             handleThinkingDelta(e.getDelta());
         } else if (event instanceof ThinkingBlockEndEvent) {
-            endReasoningIfNeeded();
+            endReasoning();
+        } else if (event instanceof TextBlockStartEvent) {
+            startText();
         } else if (event instanceof TextBlockDeltaEvent e) {
             handleTextDelta(e.getDelta());
+        } else if (event instanceof TextBlockEndEvent) {
+            endText();
         } else if (event instanceof ToolCallStartEvent e) {
             handleToolCallStart(e);
         } else if (event instanceof ToolCallDeltaEvent e) {
             handleToolCallDelta(e);
         } else if (event instanceof ToolCallEndEvent e) {
             handleToolCallEnd(e);
+        } else if (event instanceof ToolResultTextDeltaEvent e) {
+            handleToolResultTextDelta(e);
         } else if (event instanceof ToolResultEndEvent e) {
             handleToolResultEnd(e);
         }
     }
 
+    private void startReasoning() {
+        if (openReasoningId == null) {
+            openReasoningId = "msg-reasoning-" + UUID.randomUUID();
+            emitJson(Map.of(
+                    "type", AguiEventType.REASONING_MESSAGE_START,
+                    "messageId", openReasoningId,
+                    "role", "reasoning"
+            ));
+            emitSnapshotProgress("模型深度思考中…");
+        }
+    }
+
     private void handleThinkingDelta(String delta) {
         if (delta == null || delta.isEmpty()) return;
-        if (!reasoningStarted) {
-            reasoningStarted = true;
-            emitJson(Map.of(
-                    "type", AguiEventType.REASONING_START,
-                    "messageId", reasoningMsgId
-            ));
+        if (openReasoningId == null) {
+            startReasoning();
         }
         emitJson(Map.of(
-                "type", AguiEventType.REASONING_CONTENT,
-                "messageId", reasoningMsgId,
+                "type", AguiEventType.REASONING_MESSAGE_CONTENT,
+                "messageId", openReasoningId,
                 "delta", delta
         ));
     }
 
-    private void endReasoningIfNeeded() {
-        if (reasoningStarted && !reasoningEnded) {
-            reasoningEnded = true;
+    private void endReasoning() {
+        if (openReasoningId != null) {
             emitJson(Map.of(
-                    "type", AguiEventType.REASONING_END,
-                    "messageId", reasoningMsgId
+                    "type", AguiEventType.REASONING_MESSAGE_END,
+                    "messageId", openReasoningId
+            ));
+            openReasoningId = null;
+        }
+    }
+
+    private void startText() {
+        endReasoning();
+        if (openTextId == null) {
+            openTextId = "msg-text-" + UUID.randomUUID();
+            lastTextId = openTextId;
+            emitJson(Map.of(
+                    "type", AguiEventType.TEXT_MESSAGE_START,
+                    "messageId", openTextId,
+                    "role", "assistant"
             ));
         }
     }
 
     private void handleTextDelta(String delta) {
         if (delta == null || delta.isEmpty()) return;
-        endReasoningIfNeeded();
+        endReasoning();
 
-        if (!textStarted) {
-            textStarted = true;
-            emitJson(Map.of(
-                    "type", AguiEventType.TEXT_MESSAGE_START,
-                    "messageId", textMsgId,
-                    "role", "assistant"
-            ));
+        if (openTextId == null) {
+            startText();
         }
         fullAnswer.append(delta);
         emitJson(Map.of(
                 "type", AguiEventType.TEXT_MESSAGE_CONTENT,
-                "messageId", textMsgId,
+                "messageId", openTextId,
                 "delta", delta
         ));
     }
 
+    private void endText() {
+        if (openTextId != null) {
+            emitJson(Map.of(
+                    "type", AguiEventType.TEXT_MESSAGE_END,
+                    "messageId", openTextId
+            ));
+            lastTextId = openTextId;
+            openTextId = null;
+        }
+    }
+
     private void handleToolCallStart(ToolCallStartEvent e) {
-        endReasoningIfNeeded();
+        endReasoning();
+
+        // 如果调用工具前产生了说明文本，通知前端将其标记为伴随工具的中间过程说明
+        String processMsgId = openTextId != null ? openTextId : lastTextId;
+        if (processMsgId != null) {
+            emitJson(Map.of(
+                    "type", AguiEventType.CUSTOM,
+                    "name", AguiEventType.CUSTOM_PROCESS_MESSAGE,
+                    "value", Map.of("messageId", processMsgId, "runId", runId)
+            ));
+        }
+        // 闭合当前的文本块，后续工具输出与回答将作为新阶段
+        endText();
+
         String callId = e.getToolCallId();
         String toolName = e.getToolCallName();
 
         toolArgBuffers.put(callId, new StringBuilder());
-        Activity activity = new Activity(callId, resolveKind(toolName), "running",
-                toolName, System.currentTimeMillis());
-        activity.setRunId(runId);
+        toolOutputBuffers.put(callId, new StringBuilder());
 
-        // 如果是文件写或修改，在执行前记录现有磁盘内容以便生成 diff
+        // 统一以 tool:<callId> 作为工具卡片 ID
+        String toolActivityId = "tool:" + callId;
+        Activity toolActivity = new Activity(
+                toolActivityId,
+                "tool",
+                "running",
+                toolName,
+                System.currentTimeMillis()
+        );
+        toolActivity.setRunId(runId);
+        toolActivity.setSubtitle("执行中");
+        toolActivity.setDetail(new ToolDetail(toolName, Map.of()));
+        activities.put(toolActivityId, toolActivity);
+        emitActivity(toolActivity);
+
+        // 如果是文件操作工具，同时创建 file:<callId> 卡片
+        if (isFileTool(toolName)) {
+            String fileActivityId = "file:" + callId;
+            String op = mapFileOp(toolName);
+            Activity fileActivity = new Activity(
+                    fileActivityId,
+                    "file",
+                    "running",
+                    op + " · " + toolName,
+                    System.currentTimeMillis()
+            );
+            fileActivity.setRunId(runId);
+            fileActivity.setDetail(new FileDetail("", op));
+            activities.put(fileActivityId, fileActivity);
+            emitActivity(fileActivity);
+        }
+
+        // 文件修改前捕获基线内容
         if ("write_file".equals(toolName) || "edit_file".equals(toolName)) {
             capturePreContent(callId, toolName, null);
         }
-
-        activities.put(callId, activity);
-        emitActivity(activity);
     }
 
     private void handleToolCallDelta(ToolCallDeltaEvent e) {
@@ -173,12 +260,7 @@ public class AguiAdapter {
     private void handleToolCallEnd(ToolCallEndEvent e) {
         String callId = e.getToolCallId();
         String toolName = e.getToolCallName();
-        Activity activity = activities.get(callId);
-        if (activity == null) {
-            activity = new Activity(callId, resolveKind(toolName), "running", toolName, System.currentTimeMillis());
-            activity.setRunId(runId);
-            activities.put(callId, activity);
-        }
+        String toolActivityId = "tool:" + callId;
 
         StringBuilder sb = toolArgBuffers.get(callId);
         String rawArgs = sb != null ? sb.toString() : "";
@@ -188,9 +270,34 @@ public class AguiAdapter {
             capturePreContent(callId, toolName, parsedInput);
         }
 
-        // 解析 Todo 清单
-        if ("todo_write".equals(toolName) && parsedInput instanceof Map<?, ?> map) {
-            activity.setKind("todo");
+        // 更新工具卡片参数详情
+        Activity toolActivity = activities.get(toolActivityId);
+        if (toolActivity != null) {
+            toolActivity.setDetail(new ToolDetail(toolName, parsedInput));
+            emitActivity(toolActivity);
+        }
+
+        // 处理文件卡片
+        if (isFileTool(toolName)) {
+            String fileActivityId = "file:" + callId;
+            Activity fileActivity = activities.get(fileActivityId);
+            if (fileActivity != null) {
+                String filePath = extractPath(parsedInput);
+                fileActivity.setSubtitle(filePath);
+                fileActivity.setDetail(new FileDetail(filePath, mapFileOp(toolName)));
+                emitActivity(fileActivity);
+            }
+        }
+
+        // 处理 Todo 卡片
+        if (("write_todos".equals(toolName) || "todo_write".equals(toolName)) && parsedInput instanceof Map<?, ?> map) {
+            String todoId = "todo:" + runId;
+            Activity todoActivity = activities.get(todoId);
+            if (todoActivity == null) {
+                todoActivity = new Activity(todoId, "todo", "running", "待办任务清单", System.currentTimeMillis());
+                todoActivity.setRunId(runId);
+                activities.put(todoId, todoActivity);
+            }
             Object itemsObj = map.get("todos");
             if (itemsObj instanceof List<?> list) {
                 List<TodoItem> items = new ArrayList<>();
@@ -203,77 +310,121 @@ public class AguiAdapter {
                         if ("completed".equalsIgnoreCase(status)) completed++;
                     }
                 }
-                activity.setDetail(new TodoDetail(items, completed, items.size()));
-                activity.setTitle("待办任务清单");
+                todoActivity.setDetail(new TodoDetail(items, completed, items.size()));
+                todoActivity.setSubtitle("进行中 (" + completed + "/" + items.size() + ")");
+                emitActivity(todoActivity);
             }
         } else if ("agent_spawn".equals(toolName) && parsedInput instanceof Map<?, ?> map) {
-            activity.setKind("subagent");
-            String agentName = map.get("agent") != null ? String.valueOf(map.get("agent")) : "researcher";
+            String subagentId = "subagent:" + callId;
+            Activity subActivity = new Activity(subagentId, "subagent", "running", "子智能体任务", System.currentTimeMillis());
+            subActivity.setRunId(runId);
+            String agentName = map.get("agent") != null ? String.valueOf(map.get("agent")) : "worker";
             String task = map.get("task") != null ? String.valueOf(map.get("task")) : "";
-            activity.setTitle("子智能体 [" + agentName + "]");
-            activity.setDetail(new SubagentDetail(agentName, task));
-        } else if (isFileTool(toolName)) {
-            activity.setKind("file");
-            String filePath = extractPath(parsedInput);
-            activity.setTitle(toolName + " " + (filePath.isEmpty() ? "" : filePath));
-            activity.setDetail(new FileDetail(filePath, mapFileOp(toolName)));
-        } else {
-            activity.setDetail(new ToolDetail(toolName, parsedInput));
+            subActivity.setTitle("子智能体 · " + agentName);
+            subActivity.setDetail(new SubagentDetail(agentName, task));
+            activities.put(subagentId, subActivity);
+            emitActivity(subActivity);
         }
+    }
 
-        emitActivity(activity);
+    private void handleToolResultTextDelta(ToolResultTextDeltaEvent e) {
+        String callId = e.getToolCallId();
+        if (callId != null && e.getDelta() != null) {
+            toolOutputBuffers.computeIfAbsent(callId, k -> new StringBuilder()).append(e.getDelta());
+        }
     }
 
     private void handleToolResultEnd(ToolResultEndEvent e) {
         String callId = e.getToolCallId();
-        Activity activity = activities.get(callId);
-        if (activity == null) return;
+        String toolName = e.getToolCallName();
+        String toolActivityId = "tool:" + callId;
+        Activity toolActivity = activities.get(toolActivityId);
 
-        long now = System.currentTimeMillis();
-        activity.setEndedAt(now);
-        activity.setDurationMs(Math.max(0, now - activity.getStartedAt()));
-
-        boolean success = e.getState() != null && "SUCCESS".equalsIgnoreCase(e.getState().name());
-        activity.setStatus(success ? "completed" : "failed");
-
-        String outputStr = e.getState() != null ? e.getState().name() : "";
-        if (activity.getDetail() instanceof ToolDetail td) {
-            td.setOutput(outputStr.length() > 5000 ? outputStr.substring(0, 5000) + "…(已截断)" : outputStr);
-            td.setTruncated(outputStr.length() > 5000);
-        } else if (activity.getDetail() instanceof FileDetail fd) {
-            // 计算 Diff
-            String pre = toolPreContents.remove(callId);
-            if (pre != null && ("write".equals(fd.getOperation()) || "edit".equals(fd.getOperation()))) {
-                String post = readDiskContent(fd.getPath());
-                fd.setDiff(calculateDiff(fd.getPath(), pre, post));
-            }
-        } else if (activity.getDetail() instanceof SubagentDetail sd) {
-            sd.setResultSummary(outputStr.length() > 1000 ? outputStr.substring(0, 1000) + "…" : outputStr);
+        StringBuilder outputSb = toolOutputBuffers.remove(callId);
+        String rawOutput = outputSb != null ? outputSb.toString() : "";
+        if (rawOutput.isEmpty() && e.getState() != null) {
+            rawOutput = e.getState().name();
         }
 
-        emitActivity(activity);
+        long now = System.currentTimeMillis();
+        boolean success = e.getState() != null && "SUCCESS".equalsIgnoreCase(e.getState().name());
+
+        if (toolActivity != null) {
+            toolActivity.setEndedAt(now);
+            toolActivity.setDurationMs(Math.max(0, now - toolActivity.getStartedAt()));
+            toolActivity.setStatus(success ? "completed" : "failed");
+            toolActivity.setSubtitle(success ? "完成" : "失败");
+
+            StringBuilder argSb = toolArgBuffers.remove(callId);
+            Object parsedInput = parseJsonOrRaw(argSb != null ? argSb.toString() : "");
+
+            ToolDetail td = new ToolDetail(toolName, parsedInput);
+            if (rawOutput.length() > 15000) {
+                td.setOutput(rawOutput.substring(0, 15000) + "\n…(输出过长，已截断展示)");
+                td.setTruncated(true);
+            } else {
+                td.setOutput(rawOutput);
+                td.setTruncated(false);
+            }
+            toolActivity.setDetail(td);
+            emitActivity(toolActivity);
+        }
+
+        // 文件卡片更新与 Diff 计算
+        if (isFileTool(toolName)) {
+            String fileActivityId = "file:" + callId;
+            Activity fileActivity = activities.get(fileActivityId);
+            if (fileActivity != null) {
+                fileActivity.setEndedAt(now);
+                fileActivity.setDurationMs(Math.max(0, now - fileActivity.getStartedAt()));
+                fileActivity.setStatus(success ? "completed" : "failed");
+
+                if (fileActivity.getDetail() instanceof FileDetail fd) {
+                    String pre = toolPreContents.remove(callId);
+                    if (pre != null && ("write".equals(fd.getOperation()) || "edit".equals(fd.getOperation()))) {
+                        String post = readDiskContent(fd.getPath());
+                        fd.setDiff(calculateDiff(fd.getPath(), pre, post));
+                    }
+                }
+                emitActivity(fileActivity);
+            }
+        }
+
+        // 子智能体卡片更新
+        String subagentId = "subagent:" + callId;
+        Activity subActivity = activities.get(subagentId);
+        if (subActivity != null) {
+            subActivity.setEndedAt(now);
+            subActivity.setDurationMs(Math.max(0, now - subActivity.getStartedAt()));
+            subActivity.setStatus(success ? "completed" : "failed");
+            if (subActivity.getDetail() instanceof SubagentDetail sd) {
+                sd.setResultSummary(rawOutput.length() > 1000 ? rawOutput.substring(0, 1000) + "…" : rawOutput);
+            }
+            emitActivity(subActivity);
+        }
     }
 
     /**
      * 发出人工审批中断卡片与快照。
      */
     public synchronized void emitRequireConfirm(List<ToolUseBlock> pendingCalls) {
-        endReasoningIfNeeded();
+        endReasoning();
+        endText();
 
         List<RunSnapshot.InterruptItem> interruptItems = new ArrayList<>();
         for (ToolUseBlock call : pendingCalls) {
             String interruptId = "interrupt-" + UUID.randomUUID();
             Activity approvalActivity = new Activity(
-                    interruptId,
+                    "approval:" + interruptId,
                     "approval",
                     "waiting_approval",
                     "审批请求：" + call.getName(),
                     System.currentTimeMillis()
             );
             approvalActivity.setRunId(runId);
-            approvalActivity.setSubtitle("该工具调用需要您的确认批准后方可执行");
-            approvalActivity.setDetail(new ApprovalDetail(call.getName(), call.getInput(), "高影响操作审批"));
-            activities.put(interruptId, approvalActivity);
+            approvalActivity.setSubtitle("该操作涉及敏感指令，需要您的审批确认");
+            approvalActivity.setDetail(new ApprovalDetail(call.getName(), call.getInput(), "高影响操作人工审批"));
+            activities.put("approval:" + interruptId, approvalActivity);
             emitActivity(approvalActivity);
 
             interruptItems.add(new RunSnapshot.InterruptItem(
@@ -284,17 +435,15 @@ public class AguiAdapter {
             ));
         }
 
-        // 推送待审批快照
         RunSnapshot snapshot = new RunSnapshot();
         snapshot.setStatus("waiting_approval");
         snapshot.setRunId(runId);
         snapshot.setThreadId(threadId);
         snapshot.setStartedAt(startedAt);
-        snapshot.setProgressNote("等待用户确认批准工具执行…");
+        snapshot.setProgressNote("等待用户人工确认审批…");
         snapshot.setInterrupts(interruptItems);
         emitRunSnapshot(snapshot);
 
-        // 结束本轮连接（outcome: interrupt）
         emitJson(Map.of(
                 "type", AguiEventType.RUN_FINISHED,
                 "runId", runId,
@@ -313,15 +462,8 @@ public class AguiAdapter {
     public synchronized void emitRunFinished() {
         if (finished) return;
         finished = true;
-        endReasoningIfNeeded();
-
-        if (textStarted && !textEnded) {
-            textEnded = true;
-            emitJson(Map.of(
-                    "type", AguiEventType.TEXT_MESSAGE_END,
-                    "messageId", textMsgId
-            ));
-        }
+        endReasoning();
+        endText();
 
         RunSnapshot snapshot = new RunSnapshot();
         snapshot.setStatus("completed");
@@ -330,7 +472,7 @@ public class AguiAdapter {
         snapshot.setStartedAt(startedAt);
         snapshot.setEndedAt(System.currentTimeMillis());
         snapshot.setDurationMs(snapshot.getEndedAt() - startedAt);
-        snapshot.setProgressNote("任务完成");
+        snapshot.setProgressNote("任务已圆满完成");
         emitRunSnapshot(snapshot);
 
         emitJson(Map.of(
@@ -347,7 +489,8 @@ public class AguiAdapter {
     public synchronized void emitRunError(String errorMessage) {
         if (finished) return;
         finished = true;
-        endReasoningIfNeeded();
+        endReasoning();
+        endText();
 
         emitJson(Map.of(
                 "type", AguiEventType.RUN_ERROR,
@@ -355,6 +498,15 @@ public class AguiAdapter {
                 "threadId", threadId,
                 "message", errorMessage != null ? errorMessage : "未知运行错误"
         ));
+    }
+
+    private void emitSnapshotProgress(String note) {
+        RunSnapshot snapshot = new RunSnapshot();
+        snapshot.setStatus("running");
+        snapshot.setRunId(runId);
+        snapshot.setThreadId(threadId);
+        snapshot.setProgressNote(note);
+        emitRunSnapshot(snapshot);
     }
 
     private void emitActivity(Activity activity) {
@@ -382,18 +534,13 @@ public class AguiAdapter {
         }
     }
 
-    private String resolveKind(String toolName) {
-        if ("todo_write".equals(toolName)) return "todo";
-        if ("agent_spawn".equals(toolName)) return "subagent";
-        if (isFileTool(toolName)) return "file";
-        return "tool";
-    }
-
     private boolean isFileTool(String name) {
+        if (name == null) return false;
         return name.contains("file") || "ls".equals(name) || "glob".equals(name) || "grep".equals(name);
     }
 
     private String mapFileOp(String toolName) {
+        if (toolName == null) return "read";
         if (toolName.contains("read")) return "read";
         if (toolName.contains("write")) return "write";
         if (toolName.contains("edit")) return "edit";
@@ -405,8 +552,12 @@ public class AguiAdapter {
     }
 
     private String extractPath(Object input) {
-        if (input instanceof Map<?, ?> m && m.containsKey("path")) {
-            return String.valueOf(m.get("path"));
+        if (input instanceof Map<?, ?> m) {
+            for (String key : List.of("file_path", "filePath", "path", "dir_path", "directory")) {
+                if (m.containsKey(key) && m.get(key) != null) {
+                    return String.valueOf(m.get(key));
+                }
+            }
         }
         return "";
     }
@@ -441,7 +592,6 @@ public class AguiAdapter {
         int additions = 0;
         int deletions = 0;
 
-        // 简易差分对比展示
         int max = Math.max(bLines.size(), aLines.size());
         for (int i = 0; i < max; i++) {
             String b = i < bLines.size() ? bLines.get(i) : null;
