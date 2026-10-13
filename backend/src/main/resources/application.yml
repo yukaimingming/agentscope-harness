@@ -1,0 +1,28 @@
+server:
+  port: 8787
+  address: 127.0.0.1
+
+spring:
+  application:
+    name: agentscope-harness-spring
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+agentscope:
+  workspace: ${DEMO_WORKSPACE:.agentscope/workspace}
+  data-dir: ${DATA_DIR:.data}
+  user-id: ${DEMO_USER_ID:kaiming}
+  default-api-key: ${ATRIA_API_KEY:sk-76d18a6f27e0aa104ebc480ae52e9e5c41141351d97cdaf414ddfe729715612e}
+  default-base-url: ${ATRIA_BASE_URL:https://discovery-api.intern-ai.org.cn/v1}
+  default-model: ${ATRIA_MODEL:Agents-A1}
+  turn-timeout-seconds: ${DEMO_TURN_TIMEOUT_SECONDS:0}
+  mcp-keepalive-seconds: ${DEMO_MCP_KEEPALIVE_SECONDS:10}
+  mcp-deepwiki-url: ${DEMO_MCP_DEEPWIKI_URL:https://mcp.deepwiki.com/mcp}
+  thinking-expanded: ${DEMO_THINKING:false}
+
+logging:
+  level:
+    root: INFO
+    com.agentscope.harness: DEBUG

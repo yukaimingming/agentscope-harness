@@ -1,0 +1,2 @@
+{"type":"message","id":"33316f7b-2bf5-4cb9-b1f8-cfb9f373fed4","timestamp":1791894717.213093100,"role":"USER","content":"请简要回复：你好，AgentScope Harness 已成功启动！"}
+{"type":"message","id":"81102a04a5e44562bde84c29c782fa32","parentId":"33316f7b-2bf5-4cb9-b1f8-cfb9f373fed4","timestamp":1791894717.214344400,"role":"ASSISTANT","content":"用户发来简短的启动确认信息，我需要用中文友好回应。作为智能体助手，我应该确认启动状态并询问有何帮助。保持简洁友好即可。\n\n\n\n你好！很高兴看到你成功启动 AgentScope Harness。有什么我可以帮助你的吗？"}

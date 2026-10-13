@@ -1,0 +1,20 @@
+# 依赖与产物
+node_modules/
+dist/
+target/
+*.log
+.DS_Store
+Thumbs.db
+
+# 数据与密钥
+.data/
+.agentscope/state/
+.agentscope/workspace/*/events/
+.agentscope/workspace/*/large_tool_results/
+
+# IDE 与环境
+.idea/
+*.iml
+.vscode/
+.env.local
+.env.*.local
