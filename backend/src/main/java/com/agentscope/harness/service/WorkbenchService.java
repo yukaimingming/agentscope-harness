@@ -28,7 +28,14 @@ public class WorkbenchService {
 
     public WorkbenchService(AgentscopeProperties properties, ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
-        this.workbenchDir = Paths.get(properties.getDataDir(), "workbench");
+        Path baseDataDir = Paths.get(properties.getDataDir()).toAbsolutePath().normalize();
+        Path parentData = baseDataDir.getParent() != null && baseDataDir.getParent().getParent() != null
+                ? baseDataDir.getParent().getParent().resolve(".data").normalize()
+                : null;
+        if (parentData != null && Files.exists(parentData)) {
+            baseDataDir = parentData;
+        }
+        this.workbenchDir = baseDataDir.resolve("workbench");
         this.sessionsDir = workbenchDir.resolve("sessions");
         this.indexPath = workbenchDir.resolve("index.md");
         initDirs();

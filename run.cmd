@@ -29,13 +29,13 @@ start "AgentScope Backend [Spring Boot]" cmd /c "cd /d "%PROJECT_ROOT%backend" &
 echo 等待后端就绪...
 timeout /t 4 /nobreak >nul
 
-echo [3/3] 启动前端 Web UI (http://127.0.0.1:5173)...
-start "AgentScope Frontend [Vite + React]" cmd /c "cd /d "%PROJECT_ROOT%frontend" && pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5173"
+echo [3/3] 启动前端 Web UI (http://127.0.0.1:5174)...
+start "AgentScope Frontend [Vite + React]" cmd /c "cd /d "%PROJECT_ROOT%frontend" && pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5174"
 
 echo.
 echo ===================================================
 echo   服务已全部启动：
-echo   - 前端工作台: http://127.0.0.1:5173
+echo   - 前端工作台: http://127.0.0.1:5174
 echo   - 后端 AG-UI:  http://127.0.0.1:8787
 echo ===================================================
 echo.

@@ -12,7 +12,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 5174,
     // 本地开发：前端只连本机服务端，不开局域网访问。
     host: "127.0.0.1",
     proxy: {

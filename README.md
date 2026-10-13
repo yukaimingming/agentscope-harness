@@ -12,7 +12,7 @@
 flowchart TD
     subgraph 前端 ["现代 Web UI (React 19 + AI Elements)"]
         UI["聊天与活动时间线界面"]
-        ViteProxy["Vite 本地代理 (:5173)"]
+        ViteProxy["Vite 本地代理 (:5174)"]
         AguiClient["@ag-ui/client 运行时"]
         UI --> AguiClient
         AguiClient --> ViteProxy
@@ -88,8 +88,8 @@ flowchart TD
 直接双击根目录下的 `run.cmd` 即可：
 - 自动检测并编译 Spring Boot 后端；
 - 后台启动后端服务（`http://127.0.0.1:8787`）；
-- 启动前端 Vite 开发服务器（`http://127.0.0.1:5173`）；
-- 访问浏览器 `http://127.0.0.1:5173` 即可开始使用。
+- 启动前端 Vite 开发服务器（`http://127.0.0.1:5174`）；
+- 访问浏览器 `http://127.0.0.1:5174` 即可开始使用。
 
 ```cmd
 run.cmd
@@ -111,9 +111,9 @@ java -Dfile.encoding=UTF-8 -jar target/agentscope-harness-spring-1.0.0.jar
 ```bash
 cd frontend
 pnpm install
-pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5173
+pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5174
 ```
-打开浏览器访问：`http://127.0.0.1:5173`。
+打开浏览器访问：`http://127.0.0.1:5174`。
 
 ---
 

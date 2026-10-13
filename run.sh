@@ -19,13 +19,13 @@ BACKEND_PID=$!
 
 sleep 4
 
-echo "[3/3] 启动前端 Web UI (http://127.0.0.1:5173)..."
-(cd frontend && pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5173) &
+echo "[3/3] 启动前端 Web UI (http://127.0.0.1:5174)..."
+(cd frontend && pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5174) &
 FRONTEND_PID=$!
 
 echo ""
 echo "服务已成功启动！"
-echo "前端界面: http://127.0.0.1:5173"
+echo "前端界面: http://127.0.0.1:5174"
 echo "按 Ctrl+C 停止服务。"
 
 trap "kill $BACKEND_PID $FRONTEND_PID" EXIT

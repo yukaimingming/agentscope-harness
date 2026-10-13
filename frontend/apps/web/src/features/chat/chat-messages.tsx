@@ -440,21 +440,77 @@ export function ChatMessages({
               );
             })()}
 
-            <div className="grid w-full max-w-md grid-cols-1 gap-2 text-left sm:grid-cols-2">
+            <div className="grid w-full max-w-2xl grid-cols-1 gap-2.5 text-left sm:grid-cols-2">
               {[
-                { label: "查看工作区文件", prompt: "查看当前工作区目录下的所有文件并说明用途。" },
-                { label: "规划待办开发任务", prompt: "为当前工作区规划一份构建 TypeScript CLI 工具的待办清单并开始执行。" },
-                { label: "创建项目说明文档", prompt: "在工作区创建 README.md 文件，写入工作台的功能特性与使用指南。" },
-                { label: "检查系统运行环境", prompt: "执行 Shell 命令检查当前系统的 Node.js 版本和操作系统平台。" },
+                {
+                  badge: "待办规划",
+                  label: "任务清单与执行",
+                  desc: "使用 todo_write 规划并跟踪任务进度",
+                  prompt: "使用 todo_write 工具为当前工作区规划一个开发自动化脚本的详细待办任务清单，并开始执行第一项任务。",
+                },
+                {
+                  badge: "文件变更",
+                  label: "文件读写与行级 Diff",
+                  desc: "创建并编辑文件，直观展示差异对比",
+                  prompt: "在工作区创建一个名为 demo-notes.txt 的文件，写入几行项目介绍；然后再编辑修改其中两行内容，展示行级 Diff 差异对比。",
+                },
+                {
+                  badge: "深度思考",
+                  label: "深度推演与思维链",
+                  desc: "流式输出思考过程并支持实时折叠展开",
+                  prompt: "请启动深度思考，全面对比快速排序与堆排序算法在内存局部性、最坏时间复杂度与工业界实际系统场景下的核心差异。",
+                },
+                {
+                  badge: "子 Agent",
+                  label: "委派 Researcher 调研",
+                  desc: "agent_spawn 委派专项智能体协同",
+                  prompt: "调用 researcher 子智能体帮我调研 AgentScope Java 框架的核心特性与工作区规范，并汇总一份简洁的调研报告。",
+                },
+                {
+                  badge: "技能系统",
+                  label: "加载会议纪要技能",
+                  desc: "识别 skills/meeting-notes 模板进行输出",
+                  prompt: "加载工作区中的 skills/meeting-notes 技能，根据其 references/template.md 模版帮我整理一份今日架构评审的规范会议纪要。",
+                },
+                {
+                  badge: "MCP 工具",
+                  label: "DeepWiki 仓库查询",
+                  desc: "调用 MCP 服务端探测远程仓库结构",
+                  prompt: "使用 deepwiki MCP 工具查询 facebook/react 仓库的架构与代码结构，说明其主要目录职责。",
+                },
+                {
+                  badge: "计划审批",
+                  label: "计划模式与人工确认",
+                  desc: "plan_enter 制定方案并在关键节点审批",
+                  prompt: "进入计划模式 (plan_enter) 制定系统重构方案，并在准备退出计划模式时等待我的确认批准。",
+                },
+                {
+                  badge: "长期记忆",
+                  label: "事实抽取沉淀落盘",
+                  desc: "后台异步写入 MEMORY.md 长期记忆",
+                  prompt: "请记住：我的偏好语言是 Java 与 TypeScript，常用后端框架是 Spring Boot 3，把这个偏好存入你的长期记忆中。",
+                },
               ].map((item) => (
                 <button
                   key={item.label}
                   type="button"
                   onClick={() => onQuickPrompt?.(item.prompt)}
-                  className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-3 text-left text-[12.5px] text-zinc-300 transition-all hover:border-zinc-700 hover:bg-zinc-900 hover:text-white"
+                  className="group flex flex-col justify-between gap-1.5 rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-3 text-left transition-all hover:border-zinc-700 hover:bg-zinc-900/90 hover:shadow-md cursor-pointer"
                 >
-                  <span className="truncate mr-1">{item.label}</span>
-                  <ArrowRightIcon className="size-3.5 text-zinc-500 shrink-0" />
+                  <div className="flex items-center justify-between w-full">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                      {item.badge}
+                    </span>
+                    <ArrowRightIcon className="size-3.5 text-zinc-500 group-hover:text-zinc-200 transition-colors" />
+                  </div>
+                  <div>
+                    <div className="text-[13px] font-medium text-zinc-200 group-hover:text-white">
+                      {item.label}
+                    </div>
+                    <div className="text-[11.5px] text-zinc-400 line-clamp-1 mt-0.5">
+                      {item.desc}
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>

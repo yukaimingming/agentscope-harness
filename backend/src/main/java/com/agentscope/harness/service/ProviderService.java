@@ -47,7 +47,13 @@ public class ProviderService {
 
     private void initStore() {
         try {
-            Path dataDir = Paths.get(properties.getDataDir());
+            Path dataDir = Paths.get(properties.getDataDir()).toAbsolutePath().normalize();
+            Path parentData = dataDir.getParent() != null && dataDir.getParent().getParent() != null
+                    ? dataDir.getParent().getParent().resolve(".data").normalize()
+                    : null;
+            if (parentData != null && Files.exists(parentData)) {
+                dataDir = parentData;
+            }
             Files.createDirectories(dataDir);
             this.storeFile = dataDir.resolve("providers.json");
 

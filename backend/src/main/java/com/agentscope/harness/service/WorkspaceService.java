@@ -25,12 +25,20 @@ public class WorkspaceService {
     public WorkspaceService(AgentscopeProperties properties) {
         this.properties = properties;
         Path p = Paths.get(properties.getWorkspace()).toAbsolutePath().normalize();
+        // 如果当前目录在 backend 下且父目录存在 .agentscope/workspace，自动使用父目录路径
+        Path parentWorkspace = p.getParent() != null && p.getParent().getParent() != null
+                ? p.getParent().getParent().resolve(".agentscope").resolve("workspace").normalize()
+                : null;
+        if (parentWorkspace != null && Files.exists(parentWorkspace)) {
+            p = parentWorkspace;
+        }
         try {
             Files.createDirectories(p);
         } catch (IOException e) {
             log.warn("创建工作区目录失败: {}", e.getMessage());
         }
         this.currentWorkspaceRoot = p.toString();
+        log.info("AgentScope 工作区已绑定至: {}", this.currentWorkspaceRoot);
     }
 
     public synchronized String getCurrentWorkspaceRoot() {
