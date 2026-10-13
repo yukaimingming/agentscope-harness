@@ -387,8 +387,14 @@ public class AguiAdapter {
 
                 if (fileActivity.getDetail() instanceof FileDetail fd) {
                     String pre = toolPreContents.remove(callId);
-                    if (pre != null && ("write".equals(fd.getOperation()) || "edit".equals(fd.getOperation()))) {
+                    if (pre == null) pre = "";
+                    if ("write".equals(fd.getOperation()) || "edit".equals(fd.getOperation())) {
                         String post = readDiskContent(fd.getPath());
+                        if (post.isEmpty() && toolActivity != null && toolActivity.getDetail() instanceof ToolDetail td) {
+                            if (td.getInput() instanceof Map<?, ?> m && m.get("content") != null) {
+                                post = String.valueOf(m.get("content"));
+                            }
+                        }
                         fd.setDiff(calculateDiff(fd.getPath(), pre, post));
                     }
                 }
@@ -576,13 +582,36 @@ public class AguiAdapter {
     }
 
     private String readDiskContent(String pathStr) {
+        if (pathStr == null || pathStr.isBlank()) return "";
         try {
             Path p = Paths.get(pathStr);
-            if (!p.isAbsolute()) {
-                p = Paths.get(workspaceRoot).resolve(pathStr);
-            }
-            if (Files.exists(p) && Files.isRegularFile(p)) {
+            if (p.isAbsolute() && Files.exists(p) && Files.isRegularFile(p)) {
                 return Files.readString(p);
+            }
+            if (workspaceRoot != null && !workspaceRoot.isBlank()) {
+                Path rootPath = Paths.get(workspaceRoot);
+                Path direct = rootPath.resolve(pathStr).normalize();
+                if (Files.exists(direct) && Files.isRegularFile(direct)) {
+                    return Files.readString(direct);
+                }
+                // 在 workspaceRoot 及其子目录 (如 workspace/kaiming/demo-notes.txt) 中查找
+                if (Files.exists(rootPath) && Files.isDirectory(rootPath)) {
+                    String targetFileName = Paths.get(pathStr).getFileName().toString();
+                    try (java.util.stream.Stream<Path> stream = Files.walk(rootPath, 4)) {
+                        java.util.Optional<Path> found = stream
+                                .filter(Files::isRegularFile)
+                                .filter(f -> f.getFileName().toString().equals(targetFileName))
+                                .findFirst();
+                        if (found.isPresent()) {
+                            return Files.readString(found.get());
+                        }
+                    }
+                }
+            }
+            // 兜底尝试 backend/workspace 或当前执行目录下的同名文件
+            Path fallback = Paths.get("workspace").resolve(pathStr).normalize();
+            if (Files.exists(fallback) && Files.isRegularFile(fallback)) {
+                return Files.readString(fallback);
             }
         } catch (Exception ignored) {
         }
@@ -590,9 +619,10 @@ public class AguiAdapter {
     }
 
     private FileDiff calculateDiff(String path, String before, String after) {
-        FileDiff diff = new FileDiff(path, before.isEmpty() ? "created" : "modified", 0, 0);
-        List<String> bLines = Arrays.asList(before.split("\r?\n"));
-        List<String> aLines = Arrays.asList(after.split("\r?\n"));
+        boolean isCreated = (before == null || before.isEmpty());
+        FileDiff diff = new FileDiff(path, isCreated ? "created" : "modified", 0, 0);
+        List<String> bLines = (before == null || before.isEmpty()) ? List.of() : Arrays.asList(before.split("\r?\n"));
+        List<String> aLines = (after == null || after.isEmpty()) ? List.of() : Arrays.asList(after.split("\r?\n"));
 
         List<DiffLine> lines = new ArrayList<>();
         int additions = 0;
@@ -603,7 +633,7 @@ public class AguiAdapter {
             String b = i < bLines.size() ? bLines.get(i) : null;
             String a = i < aLines.size() ? aLines.get(i) : null;
             if (Objects.equals(b, a)) {
-                lines.add(new DiffLine("normal", a, i + 1, i + 1));
+                lines.add(new DiffLine("normal", a != null ? a : "", i + 1, i + 1));
             } else {
                 if (b != null) {
                     lines.add(new DiffLine("delete", b, i + 1, null));
@@ -616,11 +646,36 @@ public class AguiAdapter {
             }
         }
 
+        String hunkHeader = "@@ -" + (bLines.isEmpty() ? "0,0" : "1," + bLines.size()) + " +" + (aLines.isEmpty() ? "0,0" : "1," + aLines.size()) + " @@";
         diff.setAdditions(additions);
         diff.setDeletions(deletions);
-        diff.setHunks(List.of(new DiffHunk("@@ -1," + bLines.size() + " +1," + aLines.size() + " @@", lines)));
+        diff.setHunks(List.of(new DiffHunk(hunkHeader, lines)));
         diff.setBeforeContent(before);
         diff.setAfterContent(after);
+
+        // 生成统一 unified diff patch 文本供前端 diff 卡片展示
+        StringBuilder patchSb = new StringBuilder();
+        patchSb.append(hunkHeader).append("\n");
+        int maxPatchLines = 400;
+        boolean truncated = false;
+        int count = 0;
+        for (DiffLine dl : lines) {
+            if (count >= maxPatchLines) {
+                truncated = true;
+                break;
+            }
+            if ("add".equals(dl.getType())) {
+                patchSb.append("+").append(dl.getText() != null ? dl.getText() : "").append("\n");
+            } else if ("delete".equals(dl.getType())) {
+                patchSb.append("-").append(dl.getText() != null ? dl.getText() : "").append("\n");
+            } else {
+                patchSb.append(" ").append(dl.getText() != null ? dl.getText() : "").append("\n");
+            }
+            count++;
+        }
+        diff.setTruncated(truncated);
+        diff.setPatch(patchSb.toString().stripTrailing());
+
         return diff;
     }
 

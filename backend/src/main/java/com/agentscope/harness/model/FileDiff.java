@@ -17,6 +17,8 @@ public class FileDiff {
     private List<DiffHunk> hunks = new ArrayList<>();
     private String beforeContent;
     private String afterContent;
+    private String patch;
+    private boolean truncated;
 
     public static class DiffLine {
         private String type; // add, delete, normal
@@ -157,5 +159,21 @@ public class FileDiff {
 
     public void setAfterContent(String afterContent) {
         this.afterContent = afterContent;
+    }
+
+    public String getPatch() {
+        return patch;
+    }
+
+    public void setPatch(String patch) {
+        this.patch = patch;
+    }
+
+    public boolean isTruncated() {
+        return truncated;
+    }
+
+    public void setTruncated(boolean truncated) {
+        this.truncated = truncated;
     }
 }
