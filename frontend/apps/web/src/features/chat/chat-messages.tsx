@@ -262,6 +262,10 @@ export function buildTurnProcessTimeline(
         }
         ownedMessageIds.add(item.id);
       }
+      // 防御锁：非最终答复且无实质正文的消息（如中间过程节点、空占位），一律由时间线接管，禁止外漏
+      if (item.id !== finalMessage?.id && !item.content.trim()) {
+        ownedMessageIds.add(item.id);
+      }
     }
     for (const activity of turnActivities) items.push({ id: activity.id, kind: "activity", activity });
     items.sort(compareTimelineItems);
@@ -653,15 +657,25 @@ export function ChatMessages({
               // 思考还在增量到达时先不画正文，避免两段抢同一条消息。
               // 已被时间线收下的说明（含运行中、工具之后的中间返回）不在外面再画一份 Markdown。
               const isReasoningStreaming = message.reasoningStreaming === true;
+              const hasSubstantialContent = Boolean(message.content && message.content.trim().length > 0);
               const shouldShowMessageContent =
-                !messageIsInTimeline && !isReasoningStreaming && (message.content.length > 0 || message.streaming);
+                !messageIsInTimeline &&
+                !isReasoningStreaming &&
+                (hasSubstantialContent || (message.streaming && !message.reasoningStreaming));
               const turnAnswer = answerByHost.get(message.id);
               const hostDurationMs = durationByHost.get(message.id) ?? message.runDurationMs;
+
+              const hasProcessSection = Boolean(processItems.length > 0 || showLivePlaceholder);
+              const hasApprovalSection = Boolean(isLast && approvals.length > 0);
+              // 如果既没有过程时间线，也没有正文内容，也没有审批卡片，整块直接跳过，避免留出多余空容器
+              if (!hasProcessSection && !shouldShowMessageContent && !hasApprovalSection) {
+                return null;
+              }
 
               return (
                 <div key={message.id} className="flex flex-col w-full text-zinc-100 space-y-3">
                   {/* 过程时间线固定在本轮第一条助手消息上，工具按出现顺序往下追加。 */}
-                  {(processItems.length > 0 || showLivePlaceholder) && (
+                  {hasProcessSection && (
                   <ProcessActivityGroup
                     key={message.id}
                     items={processItems}
@@ -675,7 +689,7 @@ export function ChatMessages({
                   )}
 
                   {/* 4. 人工安全审批卡片 */}
-                  {isLast &&
+                  {hasApprovalSection &&
                     approvals.map((activity) => (
                       <div key={activity.id} className="w-full my-1">
                         <ApprovalCard
@@ -690,11 +704,11 @@ export function ChatMessages({
                   {shouldShowMessageContent && (
                     <Message from="assistant" className="w-full">
                       <MessageContent className="text-zinc-100 w-full text-[14px]">
-                        {message.streaming && message.content.length === 0 ? (
+                        {message.streaming && !hasSubstantialContent ? (
                           <span className="text-[13px] text-zinc-500 animate-pulse">
                             正在输出回答…
                           </span>
-                        ) : message.content.length > 0 ? (
+                        ) : hasSubstantialContent ? (
                           <div className={cn("w-full text-zinc-100", message.streaming && "streaming-caret")}>
                             <MessageResponse mode="static" isAnimating={message.streaming}>
                               {message.content}
@@ -703,8 +717,8 @@ export function ChatMessages({
                         ) : null}
                       </MessageContent>
 
-                      {/* 消息底部操作工具条（复制、重试） */}
-                      {!message.streaming && message.content.length > 0 && (
+                      {/* 消息底部操作工具条（复制、重试）：严格要求有实质非空正文 */}
+                      {!message.streaming && hasSubstantialContent && (
                         <MessageToolbar className="mt-2 text-zinc-500">
                           <MessageActionsGroup>
                             <MessageAction

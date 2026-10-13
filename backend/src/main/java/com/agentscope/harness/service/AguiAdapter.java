@@ -43,7 +43,6 @@ public class AguiAdapter {
 
     // 当前文本流状态
     private String openTextId = null;
-    private String lastTextId = null;
     private final StringBuilder fullAnswer = new StringBuilder();
 
     // 工具调用与输出累积缓冲区
@@ -96,8 +95,6 @@ public class AguiAdapter {
             handleThinkingDelta(e.getDelta());
         } else if (event instanceof ThinkingBlockEndEvent) {
             endReasoning();
-        } else if (event instanceof TextBlockStartEvent) {
-            startText();
         } else if (event instanceof TextBlockDeltaEvent e) {
             handleTextDelta(e.getDelta());
         } else if (event instanceof TextBlockEndEvent) {
@@ -149,11 +146,13 @@ public class AguiAdapter {
         }
     }
 
+    private final StringBuilder currentTextContent = new StringBuilder();
+
     private void startText() {
         endReasoning();
         if (openTextId == null) {
             openTextId = "msg-text-" + UUID.randomUUID();
-            lastTextId = openTextId;
+            currentTextContent.setLength(0);
             emitJson(Map.of(
                     "type", AguiEventType.TEXT_MESSAGE_START,
                     "messageId", openTextId,
@@ -164,12 +163,18 @@ public class AguiAdapter {
 
     private void handleTextDelta(String delta) {
         if (delta == null || delta.isEmpty()) return;
+        // 如果当前尚未开启正文，且delta全部是换行或空白字符，先不开启正文，避免产生空气泡
+        if (openTextId == null && delta.isBlank()) {
+            return;
+        }
+
         endReasoning();
 
         if (openTextId == null) {
             startText();
         }
         fullAnswer.append(delta);
+        currentTextContent.append(delta);
         emitJson(Map.of(
                 "type", AguiEventType.TEXT_MESSAGE_CONTENT,
                 "messageId", openTextId,
@@ -183,25 +188,26 @@ public class AguiAdapter {
                     "type", AguiEventType.TEXT_MESSAGE_END,
                     "messageId", openTextId
             ));
-            lastTextId = openTextId;
             openTextId = null;
+            currentTextContent.setLength(0);
         }
     }
 
     private void handleToolCallStart(ToolCallStartEvent e) {
         endReasoning();
 
-        // 如果调用工具前产生了说明文本，通知前端将其标记为伴随工具的中间过程说明
-        String processMsgId = openTextId != null ? openTextId : lastTextId;
-        if (processMsgId != null) {
+        // 仅当调用工具前输出了实质性非空白文本时，才标记为伴随工具的中间过程说明
+        if (openTextId != null && !currentTextContent.toString().trim().isEmpty()) {
             emitJson(Map.of(
                     "type", AguiEventType.CUSTOM,
                     "name", AguiEventType.CUSTOM_PROCESS_MESSAGE,
-                    "value", Map.of("messageId", processMsgId, "runId", runId)
+                    "value", Map.of("messageId", openTextId, "runId", runId)
             ));
+            endText();
+        } else if (openTextId != null) {
+            // 纯空白或空串的说明，直接平滑结束闭合，不作为过程文本
+            endText();
         }
-        // 闭合当前的文本块，后续工具输出与回答将作为新阶段
-        endText();
 
         String callId = e.getToolCallId();
         String toolName = e.getToolCallName();
