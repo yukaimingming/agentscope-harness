@@ -26,14 +26,16 @@ export function useGitReview(workspaceRoot: string | null) {
       const data = (await res.json()) as GitStatusResponse;
       setStatus(data);
 
-      // 若当前选中的文件已不在变更列表中，或者还没选，默认选中第一个变更文件
+      // 若当前选中的文件已不在变更列表中，或者还没选，优先默认选中非图片的代码/文本修改文件
       setSelectedFile((prev) => {
         const allChanges = [...(data.changes || []), ...(data.staged || [])];
         if (allChanges.length === 0) return null;
         if (prev && allChanges.some((f) => f.path === prev.path)) {
           return prev;
         }
-        return allChanges[0] ?? null;
+        // 关键改进：优先选中具体的代码/文本文件，避免进入时只显示截图！
+        const firstCodeFile = allChanges.find((f) => !f.isImage);
+        return firstCodeFile ?? allChanges[0] ?? null;
       });
     } catch (err) {
       console.error("加载 Git 状态异常:", err);

@@ -192,16 +192,41 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
 
       {/* 搜索过滤栏 */}
       {showSearch && (
-        <div className="flex items-center border-b border-zinc-800 bg-zinc-900/80 px-3 py-1.5">
-          <SearchIcon className="size-3.5 text-zinc-500 mr-2 shrink-0" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="过滤文件名称或目录..."
-            className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
-            autoFocus
-          />
+        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-3 py-1.5">
+          <div className="flex items-center flex-1 mr-2">
+            <SearchIcon className="size-3.5 text-zinc-500 mr-2 shrink-0" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => {
+                const term = e.target.value;
+                setSearchTerm(term);
+                if (term.trim()) {
+                  const all = [...changesFiles, ...stagedFiles];
+                  const matched = all.find(
+                    (f) =>
+                      f.name.toLowerCase().includes(term.toLowerCase()) ||
+                      f.path.toLowerCase().includes(term.toLowerCase())
+                  );
+                  if (matched) {
+                    setSelectedFile(matched);
+                  }
+                }
+              }}
+              placeholder="过滤文件名称或目录..."
+              className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+              autoFocus
+            />
+          </div>
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm("")}
+              className="text-[10px] text-zinc-400 hover:text-zinc-200"
+            >
+              清空
+            </button>
+          )}
         </div>
       )}
 
@@ -211,8 +236,10 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
         <div className="flex-1 min-w-0 h-full overflow-hidden">
           <ReviewDiffView
             file={selectedFile}
+            allFiles={[...changesFiles, ...stagedFiles]}
             diff={currentDiff}
             loading={diffLoading}
+            onSelectFile={setSelectedFile}
             onRefresh={() => selectedFile && setSelectedFile({ ...selectedFile })}
           />
         </div>

@@ -157,8 +157,17 @@ public class GitService {
             diffText = executeCommand(repo, "git", "show", commitHash + ":" + filePath);
         } else if (isStaged) {
             diffText = executeCommand(repo, "git", "diff", "--cached", "--", filePath);
+            if (diffText.isBlank()) {
+                diffText = executeCommand(repo, "git", "diff", "HEAD", "--", filePath);
+            }
+            if (diffText.isBlank() && targetFile.exists() && targetFile.isFile()) {
+                diffText = buildNewFileDiff(filePath, targetFile);
+            }
         } else {
             diffText = executeCommand(repo, "git", "diff", "--", filePath);
+            if (diffText.isBlank()) {
+                diffText = executeCommand(repo, "git", "diff", "HEAD", "--", filePath);
+            }
             // 如果 git diff 为空但文件存在，可能是未追踪新文件，构造完整新增 diff
             if (diffText.isBlank() && targetFile.exists() && targetFile.isFile()) {
                 diffText = buildNewFileDiff(filePath, targetFile);
@@ -261,6 +270,75 @@ public class GitService {
             return sb.toString();
         } catch (Exception e) {
             return "+++ 新文件 (二进制或特殊格式内容无法纯文本展示)";
+        }
+    }
+
+    /**
+     * 读取指定文件的纯文本内容。
+     */
+    public Map<String, Object> readFileContent(String customPath, String relativePath) {
+        File repo = getGitRoot(customPath);
+        File file = new File(repo, relativePath);
+        if (!file.exists() || !file.isFile()) {
+            return Map.of("ok", false, "error", "文件不存在: " + relativePath);
+        }
+        try {
+            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            return Map.of(
+                    "ok", true,
+                    "path", relativePath,
+                    "name", file.getName(),
+                    "size", file.length(),
+                    "content", content
+            );
+        } catch (Exception e) {
+            return Map.of("ok", false, "error", "读取文件失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 在当前工作区执行终端命令。
+     */
+    public Map<String, Object> executeTerminalCommand(String customPath, String command) {
+        File repo = getGitRoot(customPath);
+        if (command == null || command.isBlank()) {
+            return Map.of("ok", false, "output", "", "exitCode", 0, "cwd", repo.getAbsolutePath());
+        }
+
+        try {
+            boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+            ProcessBuilder pb;
+            if (isWindows) {
+                pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", command);
+            } else {
+                pb = new ProcessBuilder("sh", "-c", command);
+            }
+            pb.directory(repo);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    out.append(line).append("\n");
+                }
+            }
+            int exitCode = process.waitFor();
+            return Map.of(
+                    "ok", exitCode == 0,
+                    "output", out.toString(),
+                    "exitCode", exitCode,
+                    "cwd", repo.getAbsolutePath()
+            );
+        } catch (Exception e) {
+            log.error("执行终端命令失败: {}", command, e);
+            return Map.of(
+                    "ok", false,
+                    "output", "命令执行异常: " + e.getMessage(),
+                    "exitCode", -1,
+                    "cwd", repo.getAbsolutePath()
+            );
         }
     }
 

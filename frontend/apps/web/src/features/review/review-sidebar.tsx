@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ReviewPanel } from "./review-panel.js";
 import { EmptyTabView } from "./empty-tab-view.js";
+import { TerminalView } from "./terminal-view.js";
+import { FileViewer } from "./file-viewer.js";
 import {
   GitPullRequestIcon,
   PlusIcon,
@@ -8,12 +10,15 @@ import {
   PanelRightCloseIcon,
   Maximize2Icon,
   Minimize2Icon,
+  TerminalIcon,
+  FileCodeIcon,
 } from "lucide-react";
 
 interface TabItem {
   id: string;
   title: string;
-  type: "review" | "empty";
+  type: "review" | "empty" | "terminal" | "file";
+  filePath?: string;
 }
 
 interface ReviewSidebarProps {
@@ -28,7 +33,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
   ]);
   const [activeTabId, setActiveTabId] = useState<string>("review-1");
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [width, setWidth] = useState(640);
+  const [width, setWidth] = useState(660);
   const [isResizing, setIsResizing] = useState(false);
 
   // 拖拽调节宽度
@@ -61,29 +66,35 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
     setActiveTabId(newId);
   };
 
-  /** 关闭标签 */
+  /**
+   * 关闭标签：
+   * 严格按照用户需求：当关闭第一个默认标签时（或只剩一个标签时），直接收缩侧边栏！
+   */
   const handleCloseTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setTabs((prev) => {
-      const filtered = prev.filter((t) => t.id !== id);
-      if (filtered.length === 0) {
-        // 如果全关了，默认留一个 empty tab
-        const emptyId = `empty-${Date.now()}`;
-        setActiveTabId(emptyId);
-        return [{ id: emptyId, title: "Search", type: "empty" }];
+
+    // 关键修复：如果当前只有一个标签（比如默认的第一个 Review 标签），点击直接收缩侧边栏！
+    if (tabs.length <= 1) {
+      onToggle();
+      // 保持重置状态，保证下次用户展开时仍有默认 Review 标签可用
+      setTabs([{ id: "review-1", title: "Review", type: "review" }]);
+      setActiveTabId("review-1");
+      return;
+    }
+
+    // 若有多个标签，正常关闭并切换到相邻标签
+    const filtered = tabs.filter((t) => t.id !== id);
+    setTabs(filtered);
+    if (activeTabId === id) {
+      const lastTab = filtered[filtered.length - 1];
+      if (lastTab) {
+        setActiveTabId(lastTab.id);
       }
-      if (activeTabId === id) {
-        const lastTab = filtered[filtered.length - 1];
-        if (lastTab) {
-          setActiveTabId(lastTab.id);
-        }
-      }
-      return filtered;
-    });
+    }
   };
 
-  /** 在空 Tab 中点击打开 Review */
-  const handleOpenReviewInCurrent = () => {
+  /** 打开 Review 功能 */
+  const handleOpenReview = () => {
     setTabs((prev) =>
       prev.map((t) =>
         t.id === activeTabId ? { ...t, title: "Review", type: "review" } : t
@@ -91,11 +102,66 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
     );
   };
 
+  /** 打开文件查看器功能 */
+  const handleOpenFile = (path?: string) => {
+    const fileName = path ? path.split("/").pop() || path : "Open File";
+    // 如果当前已经是 empty tab，直接替换，否则新建 tab
+    const curTab = tabs.find((t) => t.id === activeTabId);
+    if (curTab && curTab.type === "empty") {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? { ...t, title: fileName, type: "file", filePath: path }
+            : t
+        )
+      );
+    } else {
+      const newId = `file-${Date.now()}`;
+      setTabs((prev) => [
+        ...prev,
+        { id: newId, title: fileName, type: "file", filePath: path },
+      ]);
+      setActiveTabId(newId);
+    }
+  };
+
+  /** 打开交互式 Terminal 功能 */
+  const handleOpenTerminal = () => {
+    const curTab = tabs.find((t) => t.id === activeTabId);
+    if (curTab && curTab.type === "empty") {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId ? { ...t, title: "Terminal", type: "terminal" } : t
+        )
+      );
+    } else {
+      const newId = `terminal-${Date.now()}`;
+      setTabs((prev) => [
+        ...prev,
+        { id: newId, title: "Terminal", type: "terminal" },
+      ]);
+      setActiveTabId(newId);
+    }
+  };
+
   if (!isOpen) {
     return null;
   }
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  const getTabIcon = (type: TabItem["type"]) => {
+    switch (type) {
+      case "review":
+        return <GitPullRequestIcon className="size-3.5 text-zinc-400 group-hover:text-zinc-200" />;
+      case "terminal":
+        return <TerminalIcon className="size-3.5 text-emerald-400" />;
+      case "file":
+        return <FileCodeIcon className="size-3.5 text-blue-400" />;
+      default:
+        return <PlusIcon className="size-3.5 text-zinc-400" />;
+    }
+  };
 
   return (
     <aside
@@ -129,12 +195,12 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
                     : "text-zinc-400 border-transparent hover:bg-zinc-900/50 hover:text-zinc-200"
                 }`}
               >
-                <GitPullRequestIcon className="size-3.5 text-zinc-400 group-hover:text-zinc-200" />
-                <span className="truncate max-w-[100px]">{tab.title}</span>
+                {getTabIcon(tab.type)}
+                <span className="truncate max-w-[120px]">{tab.title}</span>
                 <button
                   type="button"
                   onClick={(e) => handleCloseTab(tab.id, e)}
-                  title="关闭标签"
+                  title={tabs.length <= 1 ? "关闭并收起侧边栏" : "关闭标签"}
                   className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
                 >
                   <XIcon className="size-3" />
@@ -182,13 +248,21 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
 
       {/* 标签页内容呈现 */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {activeTab?.type === "review" ? (
+        {activeTab?.type === "review" && (
           <ReviewPanel workspaceRoot={workspaceRoot} />
-        ) : (
+        )}
+        {activeTab?.type === "empty" && (
           <EmptyTabView
-            onOpenReview={handleOpenReviewInCurrent}
-            onOpenFile={handleOpenReviewInCurrent}
+            onOpenReview={handleOpenReview}
+            onOpenFile={handleOpenFile}
+            onOpenTerminal={handleOpenTerminal}
           />
+        )}
+        {activeTab?.type === "terminal" && (
+          <TerminalView workspaceRoot={workspaceRoot} />
+        )}
+        {activeTab?.type === "file" && (
+          <FileViewer initialPath={activeTab.filePath} workspaceRoot={workspaceRoot} />
         )}
       </div>
     </aside>

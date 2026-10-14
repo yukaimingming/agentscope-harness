@@ -64,4 +64,33 @@ public class GitController {
             return ResponseEntity.status(400).body(Map.of("error", e.getMessage()));
         }
     }
+
+    /**
+     * 读取指定文件的纯文本内容。
+     */
+    @GetMapping("/file-content")
+    public ResponseEntity<Map<String, Object>> getFileContent(
+            @RequestParam String path,
+            @RequestParam(required = false) String root) {
+        try {
+            return ResponseEntity.ok(gitService.readFileContent(root, path));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("ok", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 运行交互式终端命令。
+     */
+    @PostMapping("/terminal")
+    public ResponseEntity<Map<String, Object>> runTerminalCommand(@RequestBody Map<String, String> body) {
+        String command = body.get("command");
+        String root = body.get("root");
+        try {
+            return ResponseEntity.ok(gitService.executeTerminalCommand(root, command));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("ok", false, "output", "终端执行错误: " + e.getMessage(), "exitCode", -1));
+        }
+    }
 }
+
