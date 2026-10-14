@@ -132,7 +132,8 @@ public class HarnessAgentManager {
             // 3. 记忆与自检中间件
             AsyncMemoryFlushMiddleware memoryFlush = new AsyncMemoryFlushMiddleware(
                     model, workspaceRoot, properties.getUserId(), Duration.ofMinutes(10).toMillis());
-            ReflectionMiddleware reflection = new ReflectionMiddleware();
+            ReflectionMiddleware reflection = new ReflectionMiddleware(
+                    workspaceRoot, properties.getUserId(), adapter::recordReflection);
 
             // 4. 构建 HarnessAgent
             HarnessAgent.Builder builder = HarnessAgent.builder()

@@ -469,6 +469,46 @@ public class AguiAdapter {
     }
 
     /**
+     * 接收 Reflection 中间件产生的自检记录，并同步到活动详情及前端时间线。
+     */
+    public synchronized void recordReflection(String line) {
+        if (line == null || line.isBlank()) return;
+
+        // 1. 同步追加到当前已执行工具的详情 output 中
+        for (Activity act : activities.values()) {
+            if ("tool".equals(act.getKind()) && act.getDetail() instanceof ToolDetail td) {
+                String existing = td.getOutput() != null ? String.valueOf(td.getOutput()) : "";
+                if (!existing.contains(line)) {
+                    td.setOutput(existing.isEmpty() ? line : existing + "\n\n" + line);
+                    emitActivity(act);
+                }
+            }
+        }
+
+        // 2. 作为过程消息推送到前端时间线
+        String reflectionMsgId = "msg-reflection-" + UUID.randomUUID();
+        emitJson(Map.of(
+                "type", AguiEventType.TEXT_MESSAGE_START,
+                "messageId", reflectionMsgId,
+                "role", "assistant"
+        ));
+        emitJson(Map.of(
+                "type", AguiEventType.TEXT_MESSAGE_CONTENT,
+                "messageId", reflectionMsgId,
+                "delta", line
+        ));
+        emitJson(Map.of(
+                "type", AguiEventType.TEXT_MESSAGE_END,
+                "messageId", reflectionMsgId
+        ));
+        emitJson(Map.of(
+                "type", AguiEventType.CUSTOM,
+                "name", AguiEventType.CUSTOM_PROCESS_MESSAGE,
+                "value", Map.of("messageId", reflectionMsgId, "runId", runId)
+        ));
+    }
+
+    /**
      * 正常结束本轮运行。
      */
     public synchronized void emitRunFinished() {
