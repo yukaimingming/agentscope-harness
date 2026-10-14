@@ -83,7 +83,7 @@ public class HarnessAgentManager {
         Map<String, Object> forwardedProps = input.getForwardedProps() != null ? input.getForwardedProps() : Map.of();
 
         // 解析工作区路径
-        String workspaceRoot = (forwardedProps.containsKey("workspaceRoot") && forwardedProps.get("workspaceRoot") != null)
+        String workspaceRoot = (forwardedProps.containsKey("workspaceRoot") && forwardedProps.get("workspaceRoot") != null && !String.valueOf(forwardedProps.get("workspaceRoot")).isBlank())
                 ? String.valueOf(forwardedProps.get("workspaceRoot"))
                 : workspaceService.getCurrentWorkspaceRoot();
 
@@ -161,6 +161,11 @@ public class HarnessAgentManager {
                             .name("summarizer")
                             .description("文本精简提炼专家。当需要长文本提炼总结时委派给它。")
                             .steps(6)
+                            .build())
+                    .subagent(SubagentDeclaration.builder()
+                            .name("researcher")
+                            .description("专业技术调研与分析智能体。擅长深入调研框架规范、技术架构与行业生态并输出结构化报告。")
+                            .steps(8)
                             .build());
 
             HarnessAgent agent = builder.build();

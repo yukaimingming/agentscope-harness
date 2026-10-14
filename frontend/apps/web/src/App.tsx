@@ -380,20 +380,25 @@ export function App() {
 
   // 切换会话
   const handleSelectSession = async (id: string) => {
-    if (id === state.threadId) return;
+    if (id === state.threadId && state.messages.length > 0) return;
     const sessionWorkspace = sessionsRef.current.find((s) => s.id === id)?.workspaceRoot;
     setWorkspaceRoot(sessionWorkspace ? sessionWorkspace : null);
-    // 目标会话若已在内存中（尤其是正在后台执行的），直接切过去看实时状态，
-    // 绝不能用磁盘快照覆盖它。
-    if (hasThread(id)) {
+
+    // 切换前先保存当前已有内容的对话
+    if (state.messages.length > 0 || state.activities.length > 0) {
+      saveSessionState(state.threadId, state, workspaceRoot ?? "");
+    }
+
+    // 目标会话若已在内存中（且内存中已包含消息，或者是正在后台执行的会话），直接切过去看实时状态，
+    // 绝不能用磁盘快照覆盖它；但若内存中只是一个未载入消息的空占位，则必须继续读取并恢复持久化内容！
+    const inMemoryState = allStates[id];
+    const isRunning = runningThreadIds.includes(id);
+    if (hasThread(id) && (isRunning || (inMemoryState && (inMemoryState.messages.length > 0 || inMemoryState.activities.length > 0)))) {
       setActiveThread(id);
       sessionsManager.setActiveSessionId(id);
       return;
     }
-    // 切换前先保存当前对话
-    if (state.messages.length > 0 || state.activities.length > 0) {
-      saveSessionState(state.threadId, state, workspaceRoot ?? "");
-    }
+
     let saved = sessionsManager.loadSessionState(id);
     if (!saved) {
       try {

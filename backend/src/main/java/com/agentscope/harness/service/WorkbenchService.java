@@ -29,11 +29,16 @@ public class WorkbenchService {
     public WorkbenchService(AgentscopeProperties properties, ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         Path baseDataDir = Paths.get(properties.getDataDir()).toAbsolutePath().normalize();
-        Path parentData = baseDataDir.getParent() != null && baseDataDir.getParent().getParent() != null
-                ? baseDataDir.getParent().getParent().resolve(".data").normalize()
-                : null;
-        if (parentData != null && Files.exists(parentData)) {
-            baseDataDir = parentData;
+        Path backendData = Paths.get("backend").resolve(properties.getDataDir()).toAbsolutePath().normalize();
+        if ((!Files.exists(baseDataDir.resolve("workbench/sessions"))) && Files.exists(backendData.resolve("workbench/sessions"))) {
+            baseDataDir = backendData;
+        } else {
+            Path parentData = baseDataDir.getParent() != null && baseDataDir.getParent().getParent() != null
+                    ? baseDataDir.getParent().getParent().resolve(".data").normalize()
+                    : null;
+            if (parentData != null && Files.exists(parentData.resolve("workbench"))) {
+                baseDataDir = parentData;
+            }
         }
         this.workbenchDir = baseDataDir.resolve("workbench");
         this.sessionsDir = workbenchDir.resolve("sessions");
@@ -80,6 +85,17 @@ public class WorkbenchService {
     public synchronized Object loadSessionState(String threadId) {
         try {
             Path sessionFile = sessionPath(threadId);
+            if (!Files.exists(sessionFile)) {
+                Path fallback = Paths.get("backend/.data/workbench/sessions", sessionFile.getFileName().toString());
+                if (Files.exists(fallback)) {
+                    sessionFile = fallback;
+                } else {
+                    Path rootFallback = Paths.get(".data/workbench/sessions", sessionFile.getFileName().toString());
+                    if (Files.exists(rootFallback)) {
+                        sessionFile = rootFallback;
+                    }
+                }
+            }
             if (Files.exists(sessionFile)) {
                 String raw = Files.readString(sessionFile);
                 String json = parseMarkdownJson(raw);
@@ -128,7 +144,7 @@ public class WorkbenchService {
         int codeBlockStart = trimmed.indexOf("```json");
         if (codeBlockStart >= 0) {
             int jsonStart = codeBlockStart + 7;
-            int codeBlockEnd = trimmed.indexOf("```", jsonStart);
+            int codeBlockEnd = trimmed.lastIndexOf("```");
             if (codeBlockEnd > jsonStart) {
                 return trimmed.substring(jsonStart, codeBlockEnd).trim();
             }

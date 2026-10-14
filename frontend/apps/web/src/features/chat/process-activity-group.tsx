@@ -259,11 +259,14 @@ export function ProcessActivityGroup({
   // 3. 用户手动点击标题栏可随时展开/收起查看详情；
   // 4. 当状态从进行中过渡到正式正文时重置手动状态，确保自然收缩。
   const [manualExpanded, setManualExpanded] = useState<boolean | undefined>(undefined);
-  const [lastSettled, setLastSettled] = useState(settled);
-  if (settled !== lastSettled) {
-    setLastSettled(settled);
-    setManualExpanded(undefined);
-  }
+  const prevSettledRef = useRef(settled);
+  useEffect(() => {
+    if (prevSettledRef.current !== settled) {
+      prevSettledRef.current = settled;
+      setManualExpanded(undefined);
+    }
+  }, [settled]);
+
   const expanded = manualExpanded ?? !settled;
   const isComplete = settled || finalAnswerComplete || runCompleted || !isActive;
   const statusLabel = isComplete ? "已完成分析" : "正在分析";
@@ -331,20 +334,8 @@ export function ProcessActivityGroup({
   // 实时运行时的动态耗时
   const liveElapsed = Math.max(recordDurationMs, now - liveStartedAt);
 
-  // 仅在真实运行中且刚转变为 settled 完成态时冻结当前的 liveElapsed；
-  // 若组件初次挂载时就已经是完成态（历史会话），直接严格锁定为 recordDurationMs，不可受当前时钟污染！
-  const [frozenElapsed, setFrozenElapsed] = useState<number | undefined>(() => {
-    return settled ? recordDurationMs : undefined;
-  });
-
-  if (settled && frozenElapsed === undefined) {
-    setFrozenElapsed(recordDurationMs > 0 ? recordDurationMs : liveElapsed);
-  } else if (!settled && frozenElapsed !== undefined) {
-    setFrozenElapsed(undefined);
-  }
-
-  // 如果处于完成态，耗时必须永远固定且优先取已锁定的历史真实耗时，杜绝受切换会话或当前时间影响
-  const elapsedMs = isComplete ? (frozenElapsed ?? recordDurationMs) : liveElapsed;
+  // 如果处于完成态，耗时严格使用静态纯计算得到的历史真实耗时，彻底杜绝render副作用与死循环
+  const elapsedMs = isComplete ? recordDurationMs : liveElapsed;
 
   useEffect(() => {
     if (isComplete) return;

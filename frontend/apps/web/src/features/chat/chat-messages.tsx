@@ -15,7 +15,7 @@
  * 6. 人工安全审批与纯净 Markdown 渲染。
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -338,11 +338,13 @@ export function ChatMessages({
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<ChatAttachment | null>(null);
-  // 顺序表必须跟这次渲染一起更新。拖到 effect 里的话，下一条工具会赶在顺序落盘前按时间戳插回去。
-  const [timelineView, setTimelineView] = useState(() => projectTimeline(messages, activities, new Map()));
-  if (timelineView.messages !== messages || timelineView.activities !== activities) {
-    setTimelineView(projectTimeline(messages, activities, timelineView.order));
-  }
+  // 顺序表必须跟这次渲染一起更新，使用 useRef 保存已有顺序，useMemo 纯计算消除 render 阶段调用 setState 的死循环隐患
+  const timelineOrderRef = useRef<Map<string, number>>(new Map());
+  const timelineView = useMemo(() => {
+    const projected = projectTimeline(messages, activities, timelineOrderRef.current);
+    timelineOrderRef.current = projected.order;
+    return projected;
+  }, [messages, activities]);
   const {
     byFinalMessage: turnTimelineByMessage,
     ownedMessageIds: timelineOwnedMessageIds,
