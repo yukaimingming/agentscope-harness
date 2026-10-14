@@ -22,6 +22,7 @@ export type ProcessTimelineItem =
       startedAt: number;
       streaming?: boolean;
       section?: "reasoning";
+      reasoningDuration?: number;
     }
   | {
       id: string;
@@ -332,10 +333,32 @@ export function ProcessActivityGroup({
   })();
 
   // 实时运行时的动态耗时
-  const liveElapsed = Math.max(recordDurationMs, now - liveStartedAt);
+  const liveElapsed = Math.max(1000, now - liveStartedAt);
 
-  // 如果处于完成态，耗时严格使用静态纯计算得到的历史真实耗时，彻底杜绝render副作用与死循环
-  const elapsedMs = isComplete ? recordDurationMs : liveElapsed;
+  // 记录本轮组件是否是以已完成状态初次挂载（历史会话）
+  const isHistoryMountRef = useRef<boolean>(!isActive && settled);
+
+  // 锁定的分析耗时（当详细分析完成时立即锁定，防止在输出正文或整轮结束时跳变成1秒或跳变刷新）
+  const lockedElapsedRef = useRef<number | undefined>(undefined);
+
+  if (isComplete) {
+    if (lockedElapsedRef.current === undefined) {
+      if (isHistoryMountRef.current) {
+        // 历史会话初次挂载：直接采用静态历史推导耗时，完全隔离当前时钟
+        lockedElapsedRef.current = recordDurationMs;
+      } else {
+        // 实时交互：当详细输出结束进入完成态的这一刻，定格当前的真实分析耗时！
+        // 在随后的输出正文阶段以及正文结束之后，始终保持该耗时不变，绝不跳变成 1秒 或跳变刷新
+        lockedElapsedRef.current = Math.max(1000, now - liveStartedAt);
+      }
+    }
+  } else {
+    // 仍在分析中，清除锁定状态以便实时平滑累加计时
+    lockedElapsedRef.current = undefined;
+  }
+
+  // 如果处于完成态，耗时必须永远固定且优先取已锁定的真实耗时，彻底杜绝跳变
+  const elapsedMs = isComplete ? (lockedElapsedRef.current ?? recordDurationMs) : liveElapsed;
 
   useEffect(() => {
     if (isComplete) return;
