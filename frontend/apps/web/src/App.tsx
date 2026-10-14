@@ -31,7 +31,8 @@ import { useProviderSettings } from "./features/settings/use-provider-settings.j
 import { useTheme } from "./features/settings/use-theme.js";
 import { useSessions, normalizePath, type SessionSummary } from "./features/chat/use-sessions.js";
 import { FolderPickerModal } from "./features/chat/folder-picker-modal.js";
-import { PanelLeftIcon, AlertCircleIcon } from "lucide-react";
+import { PanelLeftIcon, AlertCircleIcon, PanelRightIcon } from "lucide-react";
+import { ReviewSidebar } from "./features/review/review-sidebar.js";
 
 /** AG-UI 服务端地址：走代理或直接连接。 */
 const AGENT_URL = "/agent";
@@ -84,6 +85,28 @@ export function App() {
       const next = !prev;
       try {
         localStorage.setItem("agentscope_sidebar_open", String(next));
+      } catch {
+        // 忽略
+      }
+      return next;
+    });
+  };
+
+  // 右侧代码审查侧边栏折叠/展开（支持记忆状态）
+  const [isReviewOpen, setIsReviewOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("agentscope_review_open");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleReview = () => {
+    setIsReviewOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("agentscope_review_open", String(next));
       } catch {
         // 忽略
       }
@@ -547,7 +570,7 @@ export function App() {
             </h1>
           </div>
 
-          {/* 右上角保持干净，仅展示微小的运行中提示（若有） */}
+          {/* 右上角保持干净，展示微小运行中提示与代码审查(Review)边栏开关 */}
           <div className="flex items-center gap-2">
             {runningThreadIds.length > 0 && (
               <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
@@ -559,6 +582,20 @@ export function App() {
                 </span>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={toggleReview}
+              title={isReviewOpen ? "收起代码审查侧边栏" : "展开代码审查侧边栏 (Review)"}
+              aria-label="代码审查"
+              className={`rounded p-1 transition-colors ${
+                isReviewOpen
+                  ? "bg-zinc-800 text-white"
+                  : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
+              }`}
+            >
+              <PanelRightIcon className="size-4" />
+            </button>
           </div>
         </header>
 
@@ -662,6 +699,13 @@ export function App() {
           />
         </section>
       </div>
+
+      {/* 右侧可收缩的代码审查（Review）边栏 */}
+      <ReviewSidebar
+        isOpen={isReviewOpen}
+        onToggle={toggleReview}
+        workspaceRoot={workspaceRoot}
+      />
 
       {/* 文件夹选择弹窗 */}
       <FolderPickerModal
