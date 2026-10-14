@@ -314,57 +314,58 @@ export function ProcessActivityGroup({
     return 1000;
   })();
 
-  const [now, setNow] = useState(() => Date.now());
-  const initialMountTimeRef = useRef<number>(runStartedAt ?? now);
-  const lastRunStartedAtRef = useRef(runStartedAt);
-  if (runStartedAt !== undefined && runStartedAt !== lastRunStartedAtRef.current) {
-    lastRunStartedAtRef.current = runStartedAt;
-    initialMountTimeRef.current = runStartedAt;
-  }
-
-  // 运行中的起始时间计算
-  const liveStartedAt = (() => {
-    const candidates = [
-      initialMountTimeRef.current,
-      ...(runStartedAt ? [runStartedAt] : []),
-      ...itemStartTimes,
-    ].filter((t): t is number => typeof t === "number" && !Number.isNaN(t) && t > 0);
-    return candidates.length > 0 ? Math.min(...candidates) : (runStartedAt ?? now);
+  // 历史静态耗时秒数（历史会话加载时使用，严格隔离当前时钟）
+  const historySeconds = (() => {
+    if (typeof durationMs === "number" && durationMs > 0) {
+      return Math.max(1, Math.floor(durationMs / 1000));
+    }
+    if (itemStartTimes.length > 0 && itemEndTimes.length > 0) {
+      const minStart = Math.min(...itemStartTimes);
+      const maxEnd = Math.max(...itemEndTimes);
+      if (maxEnd >= minStart) {
+        return Math.max(1, Math.floor((maxEnd - minStart) / 1000));
+      }
+    }
+    return 1;
   })();
-
-  // 实时运行时的动态耗时
-  const liveElapsed = Math.max(1000, now - liveStartedAt);
 
   // 记录本轮组件是否是以已完成状态初次挂载（历史会话）
   const isHistoryMountRef = useRef<boolean>(!isActive && settled);
 
-  // 锁定的分析耗时（当详细分析完成时立即锁定，防止在输出正文或整轮结束时跳变成1秒或跳变刷新）
-  const lockedElapsedRef = useRef<number | undefined>(undefined);
+  // 严格按 1 秒 1 秒稳步累加的秒数计数器（实时运行时从 1 秒起步单调累加，不受任何 props 扰动跳回 1）
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(() => {
+    return isHistoryMountRef.current ? historySeconds : 1;
+  });
 
-  if (isComplete) {
-    if (lockedElapsedRef.current === undefined) {
-      if (isHistoryMountRef.current) {
-        // 历史会话初次挂载：直接采用静态历史推导耗时，完全隔离当前时钟
-        lockedElapsedRef.current = recordDurationMs;
-      } else {
-        // 实时交互：当详细输出结束进入完成态的这一刻，定格当前的真实分析耗时！
-        // 在随后的输出正文阶段以及正文结束之后，始终保持该耗时不变，绝不跳变成 1秒 或跳变刷新
-        lockedElapsedRef.current = Math.max(1000, now - liveStartedAt);
-      }
-    }
-  } else {
-    // 仍在分析中，清除锁定状态以便实时平滑累加计时
-    lockedElapsedRef.current = undefined;
-  }
+  // 分析完成时锁定的最终秒数（杜绝输出正文或整轮结束时跳变）
+  const lockedSecondsRef = useRef<number | undefined>(undefined);
 
-  // 如果处于完成态，耗时必须永远固定且优先取已锁定的真实耗时，彻底杜绝跳变
-  const elapsedMs = isComplete ? (lockedElapsedRef.current ?? recordDurationMs) : liveElapsed;
-
+  // 仅在正在分析中（!isComplete）启动 1 秒步进累加定时器：1秒 -> 2秒 -> 3秒 -> 4秒... 严禁任何跳秒或回退
   useEffect(() => {
-    if (isComplete) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    if (isComplete) {
+      if (lockedSecondsRef.current === undefined) {
+        lockedSecondsRef.current = isHistoryMountRef.current ? historySeconds : elapsedSeconds;
+      }
+      return;
+    }
+
+    // 重新进入分析时重置锁定
+    lockedSecondsRef.current = undefined;
+
+    const timer = window.setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+
     return () => window.clearInterval(timer);
-  }, [isComplete]);
+  }, [isComplete, historySeconds, elapsedSeconds]);
+
+  // 最终显示的秒数：分析完成态优先取定格秒数，否则取实时按秒累加值
+  const displaySeconds = isComplete
+    ? (lockedSecondsRef.current ?? (isHistoryMountRef.current ? historySeconds : elapsedSeconds))
+    : elapsedSeconds;
+
+  const displayDurationText = `${Math.floor(displaySeconds / 60)}分${displaySeconds % 60}秒`;
+
   if (items.length === 0 && !isActive) return null;
 
   return (
@@ -377,10 +378,10 @@ export function ProcessActivityGroup({
       >
         {!isComplete ? (
           <span className="text-[13px]">
-            <Shimmer as="span" duration={2} spread={3} className="font-medium">{`${statusLabel}，用时 ${formatElapsedDuration(elapsedMs)}`}</Shimmer>
+            <Shimmer as="span" duration={2} spread={3} className="font-medium">{`${statusLabel}，用时 ${displayDurationText}`}</Shimmer>
           </span>
         ) : (
-          <span className="text-[13px] font-medium">{statusLabel}，用时 {formatElapsedDuration(elapsedMs)}</span>
+          <span className="text-[13px] font-medium">{statusLabel}，用时 {displayDurationText}</span>
         )}
         {failedCount > 0 && <span className="text-xs text-[var(--color-state-error)]">（{failedCount} 项失败）</span>}
         {expanded ? (
