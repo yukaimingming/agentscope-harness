@@ -12,6 +12,7 @@ import {
   Minimize2Icon,
   TerminalIcon,
   FileCodeIcon,
+  SearchIcon,
 } from "lucide-react";
 
 interface TabItem {
@@ -28,10 +29,11 @@ interface ReviewSidebarProps {
 }
 
 export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebarProps) {
+  // 默认初始为主面板（图 1 风格：居中搜索 + Review / Open File / Terminal 三个快捷卡片）
   const [tabs, setTabs] = useState<TabItem[]>([
-    { id: "review-1", title: "Review", type: "review" },
+    { id: "main-panel", title: "Search", type: "empty" },
   ]);
-  const [activeTabId, setActiveTabId] = useState<string>("review-1");
+  const [activeTabId, setActiveTabId] = useState<string>("main-panel");
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [width, setWidth] = useState(660);
   const [isResizing, setIsResizing] = useState(false);
@@ -62,23 +64,22 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
   /** 新增空标签（显示欢迎检索页） */
   const handleAddTab = () => {
     const newId = `tab-${Date.now()}`;
-    setTabs((prev) => [...prev, { id: newId, title: "New Tab", type: "empty" }]);
+    setTabs((prev) => [...prev, { id: newId, title: "Search", type: "empty" }]);
     setActiveTabId(newId);
   };
 
   /**
    * 关闭标签：
-   * 严格按照用户需求：当关闭第一个默认标签时（或只剩一个标签时），直接收缩侧边栏！
+   * 严格按照用户需求：当点击关闭只有这一个标签（如默认Review标签）时，直接收缩侧边栏并复位为主面板！
    */
   const handleCloseTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
 
-    // 关键修复：如果当前只有一个标签（比如默认的第一个 Review 标签），点击直接收缩侧边栏！
+    // 关键需求：只有这一个默认标签时，直接收缩侧边栏，并重置为主面板供下次展开
     if (tabs.length <= 1) {
       onToggle();
-      // 保持重置状态，保证下次用户展开时仍有默认 Review 标签可用
-      setTabs([{ id: "review-1", title: "Review", type: "review" }]);
-      setActiveTabId("review-1");
+      setTabs([{ id: "main-panel", title: "Search", type: "empty" }]);
+      setActiveTabId("main-panel");
       return;
     }
 
@@ -158,6 +159,8 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
         return <TerminalIcon className="size-3.5 text-emerald-400" />;
       case "file":
         return <FileCodeIcon className="size-3.5 text-blue-400" />;
+      case "empty":
+        return <SearchIcon className="size-3.5 text-zinc-400" />;
       default:
         return <PlusIcon className="size-3.5 text-zinc-400" />;
     }

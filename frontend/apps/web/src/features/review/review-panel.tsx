@@ -60,6 +60,8 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
   const stagedFiles = status?.staged || [];
   const changesFiles = status?.changes || [];
   const commits = status?.commits || [];
+  const isGitRepo = status?.isGitRepo ?? false;
+  const totalChanges = stagedFiles.length + changesFiles.length;
 
   return (
     <div className="flex flex-1 flex-col h-full overflow-hidden bg-black text-zinc-200">
@@ -230,30 +232,46 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
         </div>
       )}
 
-      {/* 主体分栏：左侧 Diff 对比，右侧文件列表（对应图 2） */}
+      {/* 主体分栏：左侧 Diff 对比，右侧文件列表（仅当有 Git 内容且有修改时显示） */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* 左侧 Diff 内容区 */}
         <div className="flex-1 min-w-0 h-full overflow-hidden">
-          <ReviewDiffView
-            file={selectedFile}
-            allFiles={[...changesFiles, ...stagedFiles]}
-            diff={currentDiff}
-            loading={diffLoading}
-            onSelectFile={setSelectedFile}
-            onRefresh={() => selectedFile && setSelectedFile({ ...selectedFile })}
-          />
+          {totalChanges > 0 ? (
+            <ReviewDiffView
+              file={selectedFile}
+              allFiles={[...changesFiles, ...stagedFiles]}
+              diff={currentDiff}
+              loading={diffLoading}
+              onSelectFile={setSelectedFile}
+              onRefresh={() => selectedFile && setSelectedFile({ ...selectedFile })}
+            />
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center h-full p-8 text-center text-zinc-500">
+              <div className="size-10 rounded-full border border-zinc-800 bg-zinc-900/60 flex items-center justify-center mb-3 text-zinc-400">
+                <LayoutListIcon className="size-5" />
+              </div>
+              <h3 className="text-sm font-medium text-zinc-300 mb-1">
+                新建干净工作区
+              </h3>
+              <p className="text-xs text-zinc-500 max-w-xs">
+                当前工作区暂无任何未提交的 Git 代码变更，右侧变更列表已自动隐藏。
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* 右侧变更文件列表 */}
-        <div className="w-64 shrink-0 h-full overflow-hidden">
-          <ReviewFileList
-            stagedFiles={stagedFiles}
-            changesFiles={changesFiles}
-            selectedFile={selectedFile}
-            onSelectFile={setSelectedFile}
-            searchTerm={searchTerm}
-          />
-        </div>
+        {/* 右侧变更文件列表：按要求仅在工作区有 Git 内容且有修改时才显示，新建空工作区不显示 */}
+        {isGitRepo && totalChanges > 0 && (
+          <div className="w-64 shrink-0 h-full overflow-hidden">
+            <ReviewFileList
+              stagedFiles={stagedFiles}
+              changesFiles={changesFiles}
+              selectedFile={selectedFile}
+              onSelectFile={setSelectedFile}
+              searchTerm={searchTerm}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
