@@ -146,6 +146,7 @@ export function App() {
     sessions,
     groupedSessions,
     removeSession,
+    renameSession,
     clearSessionState,
     saveSessionState,
     customWorkspaces,
@@ -531,6 +532,7 @@ export function App() {
         activeSessionId={state.threadId}
         runningSessionIds={runningThreadIds}
         onSelectSession={handleSelectSession}
+        onRenameSession={renameSession}
         onClearSession={(id) => {
           clearThread(id);
           clearSessionState(id);

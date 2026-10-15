@@ -259,13 +259,18 @@ export function useSessions(initialThreadId: string, defaultWorkspace: string = 
     [],
   );
 
-  /** 新建会话。 */
+  /** 新建会话：若当前已是干净无消息的空会话，直接复用当前会话，避免产生大量重复的未发消息空会话。 */
   const createSession = useCallback((newId: string, workspaceRoot: string = ""): string => {
+    const current = sessions.find((s) => s.id === activeSessionId);
+    if (current && current.messageCount === 0 && current.title === "新对话") {
+      return current.id;
+    }
+
     const summary = createNewSessionSummary(newId, workspaceRoot);
     setSessions((prev) => [summary, ...prev.filter((s) => s.id !== newId)]);
     setActiveSessionId(newId);
     return newId;
-  }, []);
+  }, [sessions, activeSessionId]);
 
   /** 删除会话。 */
   const removeSession = useCallback((id: string) => {
@@ -354,16 +359,19 @@ export function useSessions(initialThreadId: string, defaultWorkspace: string = 
     // 4. 生成最终分组列表
     const groups: FolderGroup[] = [];
 
+    // 排序辅助函数：严格按照最近活跃更新时间降序排列
+    const sortByTimeDesc = (a: SessionSummary, b: SessionSummary) => {
+      const timeA = a.updatedAt || a.createdAt || 0;
+      const timeB = b.updatedAt || b.createdAt || 0;
+      return timeB - timeA;
+    };
+
     // 若有直接聊天会话，或者当前无任何工作区文件夹，提供直接聊天分组
     if (directChatSessions.length > 0 || groupMap.size === 0) {
       groups.push({
         folderPath: "",
         folderName: "直接聊天",
-        sessions: directChatSessions.sort((a, b) => {
-          const timeA = a.createdAt || a.updatedAt || 0;
-          const timeB = b.createdAt || b.updatedAt || 0;
-          return timeB - timeA;
-        }),
+        sessions: directChatSessions.sort(sortByTimeDesc),
       });
     }
 
@@ -372,11 +380,7 @@ export function useSessions(initialThreadId: string, defaultWorkspace: string = 
       groups.push({
         folderPath: canonicalPath,
         folderName: extractFolderName(canonicalPath),
-        sessions: sessionList.sort((a, b) => {
-          const timeA = a.createdAt || a.updatedAt || 0;
-          const timeB = b.createdAt || b.updatedAt || 0;
-          return timeB - timeA;
-        }),
+        sessions: sessionList.sort(sortByTimeDesc),
       });
     }
 

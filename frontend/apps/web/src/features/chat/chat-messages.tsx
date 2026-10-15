@@ -449,18 +449,18 @@ export function ChatMessages({
               );
             })()}
 
-            <div className="grid w-full max-w-2xl grid-cols-1 gap-2.5 text-left sm:grid-cols-2">
+            <div className="grid w-full max-w-2xl grid-cols-1 gap-2 text-left sm:grid-cols-2">
               {[
                 {
                   badge: "待办规划",
                   label: "任务清单与执行",
-                  desc: "使用 todo_write 规划并跟踪任务进度",
+                  desc: "分步拆解任务清单并自动跟进",
                   prompt: "使用 todo_write 工具为当前工作区规划一个开发自动化脚本的详细待办任务清单，并开始执行第一项任务。",
                 },
                 {
                   badge: "文件变更",
                   label: "文件读写与行级 Diff",
-                  desc: "创建并编辑文件，直观展示差异对比",
+                  desc: "创建并编辑文件，直观展示代码差异",
                   prompt: "在工作区创建一个名为 demo-notes.txt 的文件，写入几行项目介绍；然后再编辑修改其中两行内容，展示行级 Diff 差异对比。",
                 },
                 {
@@ -472,31 +472,31 @@ export function ChatMessages({
                 {
                   badge: "子 Agent",
                   label: "委派 Researcher 调研",
-                  desc: "agent_spawn 委派专项智能体协同",
+                  desc: "委派专项子智能体协作调研与汇总",
                   prompt: "调用 researcher 子智能体帮我调研 AgentScope Java 框架的核心特性与工作区规范，并汇总一份简洁的调研报告。",
                 },
                 {
                   badge: "技能系统",
                   label: "加载会议纪要技能",
-                  desc: "识别 skills/meeting-notes 模板进行输出",
+                  desc: "加载会议纪要规范模版智能排版",
                   prompt: "加载工作区中的 skills/meeting-notes 技能，根据其 references/template.md 模版帮我整理一份今日架构评审的规范会议纪要。",
                 },
                 {
                   badge: "MCP 工具",
                   label: "DeepWiki 仓库查询",
-                  desc: "调用 MCP 服务端探测远程仓库结构",
+                  desc: "连接外部工具查询代码库架构与结构",
                   prompt: "使用 deepwiki MCP 工具查询 facebook/react 仓库的架构与代码结构，说明其主要目录职责。",
                 },
                 {
                   badge: "计划审批",
                   label: "计划模式与人工确认",
-                  desc: "plan_enter 制定方案并在关键节点审批",
+                  desc: "制定实施方案并在关键节点等待人工审批",
                   prompt: "进入计划模式 (plan_enter) 制定系统重构方案，并在准备退出计划模式时等待我的确认批准。",
                 },
                 {
                   badge: "长期记忆",
                   label: "事实抽取沉淀落盘",
-                  desc: "后台异步写入 MEMORY.md 长期记忆",
+                  desc: "跨会话沉淀个人技术偏好与经验",
                   prompt: "请记住：我的偏好语言是 Java 与 TypeScript，常用后端框架是 Spring Boot 3，把这个偏好存入你的长期记忆中。",
                 },
               ].map((item) => (
@@ -504,19 +504,19 @@ export function ChatMessages({
                   key={item.label}
                   type="button"
                   onClick={() => onQuickPrompt?.(item.prompt)}
-                  className="group flex flex-col justify-between gap-1.5 rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-3 text-left transition-all hover:border-zinc-700 hover:bg-zinc-900/90 hover:shadow-md cursor-pointer"
+                  className="group flex flex-col justify-between gap-1 rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-2.5 text-left transition-all hover:border-zinc-700 hover:bg-zinc-900/90 hover:shadow-md cursor-pointer"
                 >
                   <div className="flex items-center justify-between w-full">
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700/60">
                       {item.badge}
                     </span>
-                    <ArrowRightIcon className="size-3.5 text-zinc-500 group-hover:text-zinc-200 transition-colors" />
+                    <ArrowRightIcon className="size-3 text-zinc-500 group-hover:text-zinc-200 transition-colors" />
                   </div>
                   <div>
-                    <div className="text-[13px] font-medium text-zinc-200 group-hover:text-white">
+                    <div className="text-[12.5px] font-medium text-zinc-200 group-hover:text-white">
                       {item.label}
                     </div>
-                    <div className="text-[11.5px] text-zinc-400 line-clamp-1 mt-0.5">
+                    <div className="text-[11px] text-zinc-400 line-clamp-1 mt-0.5">
                       {item.desc}
                     </div>
                   </div>

@@ -295,13 +295,14 @@ export function ChatInput({
               setIsEffortDropdownOpen(false);
             }}
             className="group inline-flex items-center gap-1.5 rounded-xl bg-transparent hover:bg-zinc-900/80 px-2.5 py-1 text-[13px] font-medium text-zinc-100 transition-colors select-none max-w-[280px] border-0 outline-none"
-            title={isDirectChat ? "当前为直接聊天模式（无工作区）" : `当前工作区：${currentWorkspacePath}`}
+            title={isDirectChat ? "当前工作区：直接聊天（未绑定目录，点击可切换工作区）" : `当前绑定工作区：${currentWorkspacePath}（点击可切换工作区）`}
           >
             {isDirectChat ? (
               <MessageSquareIcon className="size-4 text-zinc-300 shrink-0" />
             ) : (
               <FolderIcon className="size-4 text-zinc-300 shrink-0" />
             )}
+            <span className="text-zinc-400 font-normal mr-0.5 text-[12px]">工作区:</span>
             <span className="truncate">
               {isDirectChat ? "直接聊天" : currentWorkspaceName}
             </span>
@@ -439,14 +440,23 @@ export function ChatInput({
                       setIsModelDropdownOpen(false);
                       setIsEffortDropdownOpen(false);
                     }}
-                    className="composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800/70 hover:text-white"
-                    title="选择本次及后续运行的工具审批方式"
+                    className={cn(
+                      "composer-selector flex items-center gap-1.5 rounded-md px-2 py-1 text-zinc-300 transition-colors",
+                      permissionMode === "full"
+                        ? "border border-amber-500/70 bg-amber-500/15 text-amber-300 font-medium shadow-[0_0_8px_rgba(245,158,11,0.2)] hover:bg-amber-500/20"
+                        : "bg-transparent hover:bg-zinc-800/70 hover:text-white",
+                    )}
+                    title={
+                      permissionMode === "full"
+                        ? "⚠️ 危险模式：已开启完全访问权限（Agent免审批直接执行Shell命令与修改文件）"
+                        : "选择本次及后续运行的工具审批方式"
+                    }
                   >
                     {(() => {
                       const option = PERMISSION_OPTIONS.find((item) => item.mode === permissionMode) ?? PERMISSION_OPTIONS[0]!;
-                      return <option.Icon className={cn("size-3.5 shrink-0", permissionMode === "full" ? "text-orange-400" : "text-zinc-400")} />;
+                      return <option.Icon className={cn("size-3.5 shrink-0", permissionMode === "full" ? "text-amber-400" : "text-zinc-400")} />;
                     })()}
-                    <span className="text-[11.5px] font-medium">
+                    <span className={cn("text-[11.5px] font-medium", permissionMode === "full" && "text-amber-300")}>
                       {PERMISSION_OPTIONS.find((option) => option.mode === permissionMode)?.label ?? "请求批准"}
                     </span>
                     <ChevronDownIcon className={cn("size-3 text-zinc-500 transition-transform", isPermissionDropdownOpen && "rotate-180")} />
@@ -563,7 +573,7 @@ export function ChatInput({
                   )}
                 </div>
 
-                {/* Token 用量指示小圆圈：悬浮显示上下文与 Token 统计面板 */}
+                {/* Token 用量指示按钮：带文字与图标，悬浮显示上下文与 Token 统计面板 */}
                 <div
                   className="relative"
                   onMouseEnter={() => setIsUsageHover(true)}
@@ -572,20 +582,21 @@ export function ChatInput({
                   <button
                     type="button"
                     aria-label="Token 用量"
-                    title="Token 用量"
+                    title="Token 用量与上下文消耗统计（悬浮查看详情）"
                     className={cn(
-                      "flex size-4 items-center justify-center rounded-full border transition-colors cursor-pointer",
+                      "flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer",
                       usage
-                        ? "border-emerald-400/60 bg-emerald-400/20 hover:border-emerald-300"
-                        : "border-zinc-600 bg-zinc-800 hover:border-zinc-500",
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                        : "border-zinc-700/60 bg-zinc-800/50 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600",
                     )}
                   >
                     <span
                       className={cn(
-                        "size-1.5 rounded-full",
+                        "size-1.5 rounded-full shrink-0",
                         usage ? "bg-emerald-400" : "bg-zinc-500",
                       )}
                     />
+                    <span className="font-sans">用量</span>
                   </button>
 
                   {isUsageHover && (

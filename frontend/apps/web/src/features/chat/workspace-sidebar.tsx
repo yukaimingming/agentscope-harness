@@ -25,6 +25,9 @@ import {
   SearchIcon,
   AlertTriangleIcon,
   PencilIcon,
+  MessageSquareIcon,
+  CheckIcon,
+  XIcon,
 } from "lucide-react";
 import type { FolderGroup, SessionSummary } from "./use-sessions.js";
 import { FolderPickerModal } from "./folder-picker-modal.js";
@@ -52,6 +55,8 @@ interface WorkspaceSidebarProps {
   onSelectSession: (id: string) => void;
   /** 删除会话 */
   onRemoveSession: (id: string) => void;
+  /** 重命名会话 */
+  onRenameSession?: (id: string, newTitle: string) => void;
   /** 清空指定会话的全部消息（保留会话本身） */
   onClearSession?: (id: string) => void;
   /** 打开模型设置模态框 */
@@ -71,23 +76,56 @@ interface WorkspaceSidebarProps {
  * - 跨天（同年）：M月D日
  * - 跨年：YYYY年M月D日
  */
-function formatSessionTime(timestamp?: number): string {
+interface TimeBucket {
+  label: "今天" | "昨天" | "过去 7 天" | "更早";
+  sessions: SessionSummary[];
+}
+
+function bucketSessionsByTime(sessions: SessionSummary[]): TimeBucket[] {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 86400000;
+  const last7DaysStart = todayStart - 7 * 86400000;
+
+  const today: SessionSummary[] = [];
+  const yesterday: SessionSummary[] = [];
+  const last7Days: SessionSummary[] = [];
+  const earlier: SessionSummary[] = [];
+
+  for (const s of sessions) {
+    const t = s.updatedAt || s.createdAt || 0;
+    if (t >= todayStart) {
+      today.push(s);
+    } else if (t >= yesterdayStart) {
+      yesterday.push(s);
+    } else if (t >= last7DaysStart) {
+      last7Days.push(s);
+    } else {
+      earlier.push(s);
+    }
+  }
+
+  const buckets: TimeBucket[] = [];
+  if (today.length > 0) buckets.push({ label: "今天", sessions: today });
+  if (yesterday.length > 0) buckets.push({ label: "昨天", sessions: yesterday });
+  if (last7Days.length > 0) buckets.push({ label: "过去 7 天", sessions: last7Days });
+  if (earlier.length > 0) buckets.push({ label: "更早", sessions: earlier });
+  return buckets;
+}
+
+/** 格式化语义化分组下的右侧简短时间 */
+function formatShortSessionTime(timestamp?: number, bucketLabel?: string): string {
   if (!timestamp) return "";
   const d = new Date(timestamp);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    const hours = String(d.getHours()).padStart(2, "0");
-    const minutes = String(d.getMinutes()).padStart(2, "0");
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  if (bucketLabel === "今天") {
     return `${hours}:${minutes}`;
   }
-  if (d.getFullYear() === now.getFullYear()) {
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  if (bucketLabel === "昨天") {
+    return `${hours}:${minutes}`;
   }
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 export function WorkspaceSidebar({
@@ -101,6 +139,7 @@ export function WorkspaceSidebar({
   runningSessionIds,
   onSelectSession,
   onRemoveSession,
+  onRenameSession,
   onClearSession,
   onOpenSettings,
   onAddWorkspace,
@@ -116,6 +155,10 @@ export function WorkspaceSidebar({
   // 搜索关键字（快速过滤会话）
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+
+  // 会话重命名状态
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
 
   // 折叠/展开各文件夹的本地状态
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
@@ -133,14 +176,13 @@ export function WorkspaceSidebar({
       const trimmed = pickedPath.trim();
       if (!trimmed) return;
       try {
-        // 通知后端切换当前工作区
         await fetch("http://127.0.0.1:8787/api/workspace/select", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: trimmed }),
         });
       } catch {
-        // 即使请求异常也同步记录在前端
+        // 忽略
       }
       onAddWorkspace(trimmed);
       onSelect(trimmed);
@@ -150,54 +192,175 @@ export function WorkspaceSidebar({
     [onAddWorkspace, onSelect, onNewSession],
   );
 
-  /** 确认从列表中移除工作区文件夹（仅取消关联，绝不删除物理磁盘文件） */
+  /** 确认从列表中移除工作区文件夹 */
   const handleConfirmDeleteFolder = useCallback(async () => {
     if (!folderToDelete) return;
     const { path } = folderToDelete;
-    // 前端直接从工作区列表中移除，绝不删除物理磁盘上的任何文件
     onRemoveWorkspace(path);
     setFolderToDelete(null);
   }, [folderToDelete, onRemoveWorkspace]);
 
+  /** 触发重命名 */
+  const handleStartRename = (session: SessionSummary, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title);
+  };
+
+  /** 保存重命名 */
+  const handleSaveRename = (id: string, e?: React.FormEvent | React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const trimmed = editingTitle.trim();
+    if (trimmed && onRenameSession) {
+      onRenameSession(id, trimmed);
+    }
+    setEditingSessionId(null);
+  };
+
   const orderedGroups = [...groupedSessions].sort((a, b) => Number(!a.folderPath) - Number(!b.folderPath));
 
-  const renderSession = (session: SessionSummary) => {
+  const renderSession = (session: SessionSummary, bucketLabel?: string) => {
     const isActive = session.id === activeSessionId;
     const isSessionRunning = runningSessionIds?.includes(session.id) === true;
+    const isEditing = editingSessionId === session.id;
+
     return (
       <div
         key={session.id}
-        onClick={() => onSelectSession(session.id)}
+        onClick={() => {
+          if (!isEditing) onSelectSession(session.id);
+        }}
         className={`group/session sidebar-session-item relative flex items-center justify-between rounded-md px-2.5 py-1.5 text-[13px] cursor-pointer transition-colors ${
-          isActive ? "bg-zinc-800 text-white font-medium shadow-xs" : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
+          isActive
+            ? "bg-zinc-800 text-white font-medium shadow-xs border-l-2 border-zinc-200 pl-2"
+            : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
         }`}
         data-active={isActive ? "true" : "false"}
         data-session-id={session.id}
       >
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           {isSessionRunning ? (
             <span className="size-2 rounded-full bg-emerald-400 animate-pulse shrink-0" title="正在执行中" />
-          ) : isActive ? (
-            <span className="size-2 rounded-full bg-zinc-200 shrink-0" />
           ) : (
-            <span className="size-2 rounded-full border border-zinc-500 shrink-0" />
+            <MessageSquareIcon
+              className={`size-3.5 shrink-0 transition-colors ${
+                isActive ? "text-zinc-200" : "text-zinc-500 group-hover/session:text-zinc-300"
+              }`}
+            />
           )}
-          <span className="truncate text-[12.5px]">{session.title}</span>
-          {isSessionRunning && <span className="shrink-0 text-[10.5px] text-emerald-400/80">执行中</span>}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0 ml-1">
-          <span className="text-[11px] text-zinc-500 tabular-nums select-none session-time">
-            {formatSessionTime(session.updatedAt || session.createdAt)}
-          </span>
-          {onClearSession && (
-            <button type="button" onClick={(event) => { event.stopPropagation(); onClearSession(session.id); }}
-              className="opacity-0 group-hover/session:opacity-100 p-0.5 text-zinc-500 hover:text-amber-400 hover:bg-zinc-700/60 rounded transition-opacity"
-              title="清空会话内容（保留会话）"><EraserIcon className="size-3" /></button>
+
+          {isEditing ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveRename(session.id, e);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 flex-1 min-w-0"
+            >
+              <input
+                type="text"
+                value={editingTitle}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onBlur={() => handleSaveRename(session.id)}
+                autoFocus
+                className="w-full bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-100 rounded border border-zinc-700 outline-none"
+              />
+              <button
+                type="submit"
+                className="p-0.5 text-emerald-400 hover:text-emerald-300"
+                title="保存"
+              >
+                <CheckIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingSessionId(null);
+                }}
+                className="p-0.5 text-zinc-400 hover:text-zinc-200"
+                title="取消"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </form>
+          ) : (
+            <>
+              <span className="truncate text-[12.5px]">{session.title}</span>
+              {isSessionRunning && <span className="shrink-0 text-[10.5px] text-emerald-400/80">执行中</span>}
+            </>
           )}
-          <button type="button" onClick={(event) => { event.stopPropagation(); onRemoveSession(session.id); }}
-            className="opacity-0 group-hover/session:opacity-100 p-0.5 text-red-500 hover:text-red-600 hover:bg-zinc-700/60 rounded transition-opacity"
-            title="删除会话"><Trash2Icon className="size-3" /></button>
         </div>
+
+        {!isEditing && (
+          <div className="flex items-center gap-1 shrink-0 ml-1">
+            <span className="text-[11px] text-zinc-500 tabular-nums select-none session-time">
+              {formatShortSessionTime(session.updatedAt || session.createdAt, bucketLabel)}
+            </span>
+            {onRenameSession && (
+              <button
+                type="button"
+                onClick={(e) => handleStartRename(session, e)}
+                className="opacity-0 group-hover/session:opacity-100 p-0.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/60 rounded transition-opacity"
+                title="重命名会话"
+              >
+                <PencilIcon className="size-3" />
+              </button>
+            )}
+            {onClearSession && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClearSession(session.id);
+                }}
+                className="opacity-0 group-hover/session:opacity-100 p-0.5 text-zinc-500 hover:text-amber-400 hover:bg-zinc-700/60 rounded transition-opacity"
+                title="清空会话内容（保留会话）"
+              >
+                <EraserIcon className="size-3" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemoveSession(session.id);
+              }}
+              className="opacity-0 group-hover/session:opacity-100 p-0.5 text-red-500 hover:text-red-400 hover:bg-zinc-700/60 rounded transition-opacity"
+              title="删除会话"
+            >
+              <Trash2Icon className="size-3" />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /** 渲染带时间语义化分组（今天/昨天/过去 7 天/更早）与空会话过滤的列表 */
+  const renderBucketedSessions = (sessionList: SessionSummary[], emptyText = "暂无对话") => {
+    // 过滤未发送消息且非当前激活会话的冗余空会话，彻底避免空会话堆积
+    const cleaned = sessionList.filter(
+      (s) => s.id === activeSessionId || s.messageCount > 0 || (s.title !== "新对话" && s.title.trim().length > 0)
+    );
+
+    if (cleaned.length === 0) {
+      return <div className="px-2 py-2 text-[11.5px] text-zinc-500">{emptyText}</div>;
+    }
+
+    const buckets = bucketSessionsByTime(cleaned);
+
+    return (
+      <div className="flex flex-col space-y-2">
+        {buckets.map((bucket) => (
+          <div key={bucket.label} className="flex flex-col space-y-0.5">
+            <div className="px-2 pt-1 pb-0.5 text-[10px] font-medium text-zinc-500 tracking-wider">
+              {bucket.label}
+            </div>
+            {bucket.sessions.map((s) => renderSession(s, bucket.label))}
+          </div>
+        ))}
       </div>
     );
   };
@@ -275,9 +438,7 @@ export function WorkspaceSidebar({
                 <div key="recent-sessions" className="flex flex-col space-y-1">
                   <div className="sidebar-section-heading px-2 py-1.5 text-[12.5px] font-semibold text-zinc-400">最近</div>
                   <div className="flex flex-col space-y-0.5">
-                    {filteredSessions.length > 0
-                      ? filteredSessions.map(renderSession)
-                      : <div className="px-2 py-2 text-[11.5px] text-zinc-500">暂无直接聊天</div>}
+                    {renderBucketedSessions(filteredSessions, "暂无直接聊天")}
                   </div>
                 </div>
               );
@@ -337,9 +498,9 @@ export function WorkspaceSidebar({
                   </div>
                 </div>
 
-                {/* 该文件夹下的聊天会话列表（缩进展示，每项带圆圈图标） */}
+                {/* 该文件夹下的聊天会话列表（按时间语义化分组展示） */}
                 {!isCollapsed && (
-                  <div className="flex flex-col space-y-0.5 pl-3">
+                  <div className="flex flex-col space-y-0.5 pl-2.5">
                     {filteredSessions.length === 0 ? (
                       <div
                         onClick={() => {
@@ -348,11 +509,11 @@ export function WorkspaceSidebar({
                         }}
                         className="flex items-center gap-2 px-2 py-1 text-[11.5px] text-zinc-600 hover:text-zinc-400 cursor-pointer rounded"
                       >
-                        <span className="size-1.5 rounded-full border border-zinc-600" />
+                        <MessageSquareIcon className="size-3 text-zinc-600" />
                         <span>暂无对话，点击新建</span>
                       </div>
                     ) : (
-                      filteredSessions.map(renderSession)
+                      renderBucketedSessions(filteredSessions, "暂无对话")
                     )}
                   </div>
                 )}
