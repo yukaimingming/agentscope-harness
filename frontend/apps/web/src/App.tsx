@@ -31,7 +31,7 @@ import { useProviderSettings } from "./features/settings/use-provider-settings.j
 import { useTheme } from "./features/settings/use-theme.js";
 import { useSessions, normalizePath, type SessionSummary } from "./features/chat/use-sessions.js";
 import { FolderPickerModal } from "./features/chat/folder-picker-modal.js";
-import { PanelLeftIcon, AlertCircleIcon, PanelRightIcon } from "lucide-react";
+import { PanelLeftIcon, AlertCircleIcon, PanelRightIcon, SunIcon, MoonIcon } from "lucide-react";
 import { ReviewSidebar } from "./features/review/review-sidebar.js";
 
 /** AG-UI 服务端地址：走代理或直接连接。 */
@@ -548,6 +548,8 @@ export function App() {
         onAddWorkspace={addWorkspace}
         onRemoveWorkspace={handleRemoveWorkspace}
         onOpenFolderPicker={() => setIsFolderPickerOpen(true)}
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
       />
 
       {/* 右侧主聊天区 */}
@@ -572,10 +574,10 @@ export function App() {
             </h1>
           </div>
 
-          {/* 右上角保持干净，展示微小运行中提示与代码审查(Review)边栏开关 */}
-          <div className="flex items-center gap-2">
+          {/* 右上角保持干净，展示微小运行中提示、黑白主题切换与代码审查(Review)边栏开关 */}
+          <div className="flex items-center gap-1.5">
             {runningThreadIds.length > 0 && (
-              <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 mr-1">
                 <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span>
                   {isRunning
@@ -584,6 +586,22 @@ export function App() {
                 </span>
               </div>
             )}
+
+            {/* 一键切换黑白主题按钮（☀️ 浅色 / 🌙 深色） */}
+            <button
+              type="button"
+              data-testid="header-toggle-theme-btn"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              title={theme === "dark" ? "切换为浅色主题 (Light)" : "切换为深色主题 (Dark)"}
+              aria-label="切换黑白主题"
+              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            >
+              {theme === "dark" ? (
+                <SunIcon className="size-4 text-amber-400" />
+              ) : (
+                <MoonIcon className="size-4 text-indigo-400" />
+              )}
+            </button>
 
             <button
               type="button"

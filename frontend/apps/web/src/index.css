@@ -597,3 +597,75 @@ html.light .sidebar-session-item[data-active="true"] .session-time {
   font-weight: 500 !important;
 }
 
+/* ================= ContextMeter Token 用量弹层与胶囊浅色模式适配 ================= */
+html.light .context-meter-btn {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+html.light .context-meter-btn:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+html.light .context-meter-dialog {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+}
+html.light .context-meter-dialog .text-zinc-200,
+html.light .context-meter-dialog .text-zinc-300 {
+  color: #0f172a !important;
+}
+html.light .context-meter-dialog .text-zinc-400 {
+  color: #64748b !important;
+}
+html.light .context-meter-dialog .bg-zinc-800\/80 {
+  background-color: #e2e8f0 !important;
+}
+html.light .context-meter-dialog .border-zinc-800\/70 {
+  border-color: #e2e8f0 !important;
+}
+
+/* ================= StatsLine 底栏统计条浅色模式适配 ================= */
+html.light .stats-line {
+  color: #64748b !important;
+}
+html.light .stats-line .text-zinc-700 {
+  color: #cbd5e1 !important;
+}
+
+/* ================= Review 侧边栏与 Tab 栏浅色模式适配 ================= */
+html.light aside.review-sidebar,
+html.light aside[style*="width"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+html.light .review-tab-bar,
+html.light aside .bg-zinc-950 {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+html.light aside .bg-zinc-900 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+html.light aside select {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+html.light aside input[type="text"] {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+html.light aside input[type="text"]::placeholder {
+  color: #94a3b8 !important;
+}
+html.light aside textarea {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+

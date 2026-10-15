@@ -382,7 +382,7 @@ export const ContextMeter = memo(function ContextMeter({
         title={`上下文占用 ${percent}%（${formatTokens(usedTokens)} / ${formatTokens(contextWindow)}）`}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer select-none",
+          "context-meter-btn flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer select-none",
           usage
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
             : "border-zinc-700/60 bg-zinc-800/50 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
@@ -420,7 +420,7 @@ export const ContextMeter = memo(function ContextMeter({
         <div
           role="dialog"
           aria-label="上下文与 Token 用量"
-          className="absolute bottom-full mb-2 left-0 z-50 w-76 rounded-xl border border-zinc-800 bg-[#0f0f12] p-3.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 text-left text-zinc-200"
+          className="context-meter-dialog absolute bottom-full mb-2 left-0 z-50 w-76 rounded-xl border border-zinc-800 bg-[#0f0f12] p-3.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 text-left text-zinc-200"
         >
           {/* 头部：上下文已用百分比与总量 */}
           <div className="flex items-center justify-between text-[12px] font-medium mb-1.5">

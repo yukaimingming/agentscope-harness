@@ -28,6 +28,8 @@ import {
   MessageSquareIcon,
   CheckIcon,
   XIcon,
+  SunIcon,
+  MoonIcon,
 } from "lucide-react";
 import type { FolderGroup, SessionSummary } from "./use-sessions.js";
 import { FolderPickerModal } from "./folder-picker-modal.js";
@@ -68,6 +70,10 @@ interface WorkspaceSidebarProps {
   /** 打开文件夹选择弹窗回调 */
   onOpenFolderPicker?: () => void;
   serverUrl?: string;
+  /** 当前主题：dark 或 light */
+  theme?: "dark" | "light";
+  /** 切换主题回调 */
+  onToggleTheme?: () => void;
 }
 
 /**
@@ -145,6 +151,8 @@ export function WorkspaceSidebar({
   onAddWorkspace,
   onRemoveWorkspace,
   onOpenFolderPicker,
+  theme = "dark",
+  onToggleTheme,
 }: WorkspaceSidebarProps) {
   // 控制“选择工作区文件夹”弹窗
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
@@ -522,17 +530,34 @@ export function WorkspaceSidebar({
           })}
         </div>
 
-        {/* 底部设置入口 */}
-        <div className="border-t border-zinc-800/40 p-2.5">
+        {/* 底部设置入口与黑白主题切换 */}
+        <div className="border-t border-zinc-800/40 p-2.5 flex items-center justify-between gap-1">
           <button
             type="button"
             data-testid="open-settings-modal-btn"
             onClick={onOpenSettings}
-            className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-[12.5px] text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 transition-colors"
+            className="flex flex-1 items-center gap-2 rounded-md px-2.5 py-2 text-[12.5px] text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 transition-colors"
           >
             <SettingsIcon className="size-4 text-zinc-500" />
             <span>设置</span>
           </button>
+
+          {onToggleTheme && (
+            <button
+              type="button"
+              data-testid="sidebar-toggle-theme-btn"
+              onClick={onToggleTheme}
+              className="flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 transition-colors"
+              title={theme === "dark" ? "切换为浅色主题 (Light)" : "切换为深色主题 (Dark)"}
+              aria-label="切换黑白主题"
+            >
+              {theme === "dark" ? (
+                <SunIcon className="size-4 text-amber-400" />
+              ) : (
+                <MoonIcon className="size-4 text-indigo-400" />
+              )}
+            </button>
+          )}
         </div>
       </aside>
 
