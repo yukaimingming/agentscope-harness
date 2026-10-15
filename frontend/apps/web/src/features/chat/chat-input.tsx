@@ -47,12 +47,18 @@ import {
   type ReasoningEffort,
   type RunTokenUsage,
 } from "@deepagent/shared";
+import type { ChatMessage } from "./client-reducer.js";
+import { StatsLine, ContextMeter } from "./session-stats.js";
 import { cn } from "../../lib/utils.js";
 import { extractFolderName } from "./use-sessions.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
 import { TodoCard } from "./todo-card.js";
 
 interface ChatInputProps {
+  /** 当前会话消息列表，用于计算精准统计与 Token 消耗 */
+  messages?: ChatMessage[];
+  /** 当前会话活动列表，用于计算工具耗时与步骤 */
+  activities?: Activity[];
   onSend: (content: string, attachments: ChatAttachment[]) => void;
   onStop: () => void;
   isRunning: boolean;
@@ -177,6 +183,8 @@ export function ChatInput({
   workspaceRoot,
   customWorkspaces = [],
   onSelectWorkspace,
+  messages = [],
+  activities = [],
   onOpenFolderPicker,
   usage,
   todoActivity,
@@ -186,9 +194,6 @@ export function ChatInput({
   const [text, setText] = useState("");
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<ChatAttachment | null>(null);
-
-  // Token 用量悬浮面板
-  const [isUsageHover, setIsUsageHover] = useState(false);
 
   // 工作区下拉选择状态
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
@@ -392,6 +397,13 @@ export function ChatInput({
           </div>
         ) : null}
 
+        {/* DeepSeek Harness 主页面底栏统计条 (StatsLine) */}
+        <StatsLine
+          messages={messages}
+          activities={activities}
+          providedUsage={usage}
+        />
+
         <PromptInputProvider>
           {/* 纯暗黑极简边框：无任何刺眼白色外框，深邃内敛 */}
           <PromptInput
@@ -573,107 +585,12 @@ export function ChatInput({
                   )}
                 </div>
 
-                {/* Token 用量指示按钮：带文字与图标，悬浮显示上下文与 Token 统计面板 */}
-                <div
-                  className="relative"
-                  onMouseEnter={() => setIsUsageHover(true)}
-                  onMouseLeave={() => setIsUsageHover(false)}
-                >
-                  <button
-                    type="button"
-                    aria-label="Token 用量"
-                    title="Token 用量与上下文消耗统计（悬浮查看详情）"
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer",
-                      usage
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                        : "border-zinc-700/60 bg-zinc-800/50 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "size-1.5 rounded-full shrink-0",
-                        usage ? "bg-emerald-400" : "bg-zinc-500",
-                      )}
-                    />
-                    <span className="font-sans">用量</span>
-                  </button>
-
-                  {isUsageHover && (
-                    <div className="absolute bottom-full mb-2 left-0 z-50 w-72 rounded-xl border border-zinc-800 bg-[#0c0c0e] p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-100 text-left">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-                          Token 用量
-                        </span>
-                        <span className="text-[10px] text-zinc-600">
-                          {usage ? "最近一次运行" : "暂无数据"}
-                        </span>
-                      </div>
-
-                      {usage ? (
-                        <>
-                          {/* 上下文占用：最后一次模型调用的输入量 / 上下文窗口参考值 */}
-                          <div className="mb-2.5">
-                            <div className="flex items-center justify-between text-[11.5px] text-zinc-300 mb-1">
-                              <span>上下文占用</span>
-                              <span className="font-mono tabular-nums text-zinc-200">
-                                {usage.lastInputTokens.toLocaleString()}
-                                {usage.contextWindow
-                                  ? ` / 约 ${Math.round(usage.contextWindow / 1000)}K`
-                                  : " / —"}
-                              </span>
-                            </div>
-                            {usage.contextWindow ? (
-                              <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                                <div
-                                  className="h-full rounded-full bg-emerald-400/80"
-                                  style={{
-                                    width: `${Math.min(100, (usage.lastInputTokens / usage.contextWindow) * 100)}%`,
-                                  }}
-                                />
-                              </div>
-                            ) : (
-                              <div className="text-[10px] text-zinc-600">
-                                当前模型上下文窗口大小未知，无法显示占比
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="space-y-1 text-[11.5px]">
-                            <div className="flex items-center justify-between">
-                              <span className="text-zinc-400">输入 Tokens</span>
-                              <span className="font-mono tabular-nums text-zinc-200">
-                                {usage.inputTokens.toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-zinc-400">输出 Tokens</span>
-                              <span className="font-mono tabular-nums text-zinc-200">
-                                {usage.outputTokens.toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-zinc-400">缓存命中</span>
-                              <span className="font-mono tabular-nums text-emerald-400/90">
-                                {usage.cachedInputTokens.toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80">
-                              <span className="text-zinc-300 font-medium">总计</span>
-                              <span className="font-mono tabular-nums text-zinc-100 font-medium">
-                                {usage.totalTokens.toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-[11.5px] text-zinc-500 leading-relaxed">
-                          发起一次对话后，这里会显示该次运行的上下文占用、输入 / 输出 Token 与缓存命中情况。
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                {/* 1.5 DeepSeek Harness 原生 ContextMeter：环形占用率仪表圈与上下文构成/用量面板 */}
+                <ContextMeter
+                  messages={messages}
+                  activities={activities}
+                  providedUsage={usage}
+                />
 
                 {/* 2. 思考等级下拉选择样式 */}
                 <div className="relative" ref={effortDropdownRef}>

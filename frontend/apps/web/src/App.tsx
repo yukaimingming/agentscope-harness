@@ -689,6 +689,8 @@ export function App() {
             onPermissionModeChange={setPermissionMode}
             onOpenSettings={() => setSettingsOpen(true)}
             workspaceRoot={workspaceRoot}
+            messages={state.messages}
+            activities={state.activities}
             usage={state.run.usage ?? null}
             customWorkspaces={customWorkspaces}
             onSelectWorkspace={(path) => {
