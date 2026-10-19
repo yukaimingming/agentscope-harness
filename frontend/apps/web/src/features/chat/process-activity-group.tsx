@@ -181,12 +181,14 @@ function ToolActivityRow({
   itemId,
   activity,
   style,
+  isGroupComplete = false,
 }: {
   itemId: string;
   activity: Activity;
   style: { animationDelay: string };
+  isGroupComplete?: boolean;
 }) {
-  const live = isLiveActivity(activity);
+  const live = !isGroupComplete && isLiveActivity(activity);
   const [open, setOpen] = useState(false);
   const name = toolName(activity);
   const summaryText = toolInputSummary(activity);
@@ -194,7 +196,7 @@ function ToolActivityRow({
   const detail = activity.detail as { truncated?: unknown } | undefined;
   const tone = activity.status === "failed"
     ? "text-[var(--color-state-error)]"
-    : activity.status === "waiting_approval"
+    : (!isGroupComplete && activity.status === "waiting_approval")
       ? "text-[var(--color-state-warn)]"
       : "text-[var(--color-text-secondary)]";
   return (
@@ -203,7 +205,7 @@ function ToolActivityRow({
       <div className="min-w-0 flex-1">
         <details className="group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
           <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 [&::-webkit-details-marker]:hidden">
-            {live ? <Shimmer as="span" duration={2} spread={3} className="font-medium">{activityLabel(activity)}</Shimmer> : <span>{activityLabel(activity)}</span>}
+            {live ? <Shimmer as="span" duration={2} spread={3} className="font-medium">{activityLabel(activity, isGroupComplete)}</Shimmer> : <span>{activityLabel(activity, isGroupComplete)}</span>}
             {summaryText && <code className="rounded-md bg-[var(--color-surface-3)] px-1.5 py-0.5 font-mono text-[12px] text-[var(--color-text-primary)]">{summaryText}</code>}
             <ChevronDownIcon className="ml-auto size-3.5 shrink-0 transition-transform group-open:rotate-180" />
           </summary>
@@ -223,11 +225,13 @@ function ToolActivityRow({
   );
 }
 
-function activityLabel(activity: Activity): string {
+function activityLabel(activity: Activity, isGroupComplete = false): string {
   const name = toolName(activity);
   const label = TOOL_ACTIONS[name] ?? `调用了 ${name}`;
-  if (activity.status === "running" || activity.status === "pending") return ACTIVE_TOOL_ACTIONS[name] ?? `正在调用 ${name}`;
-  if (activity.status === "waiting_approval") return `等待审批：${label}`;
+  if (!isGroupComplete && (activity.status === "running" || activity.status === "pending")) {
+    return ACTIVE_TOOL_ACTIONS[name] ?? `正在调用 ${name}`;
+  }
+  if (!isGroupComplete && activity.status === "waiting_approval") return `等待审批：${label}`;
   if (activity.status === "failed") return `${label}（失败）`;
   if (activity.status === "cancelled") return `${label}（已取消）`;
   return label;
@@ -243,16 +247,34 @@ export function ProcessActivityGroup({
   durationMs,
 }: ProcessActivityGroupProps) {
   const activities = items.flatMap((item) => item.kind === "activity" ? [item.activity] : []);
-  const activeCount = activities.filter((activity) =>
-    activity.status === "running" || activity.status === "pending" || activity.status === "waiting_approval",
-  ).length;
   const failedCount = activities.filter((activity) => activity.status === "failed").length;
   const hasStreamingMessage = items.some((item) => item.kind === "assistant" && item.streaming);
-  // 只要本轮仍在执行且最终总结尚未开始输出，即使在思考与工具衔接的短暂间隙也保持「正在分析」，避免状态与折叠来回跳变。
+
+  // 判定总体过程是否已进入终态或正文输出阶段：
+  // 1. 运行已结束 (runCompleted)；
+  // 2. 最终答复已完成 (finalAnswerComplete)；
+  // 3. 最终答复已开始流式揭示且思考过程已结束 (finalAnswerStreaming && !hasStreamingMessage)；
+  // 4. 当前会话非活跃生成中 (!isActive)。
+  const isComplete = Boolean(
+    runCompleted ||
+    finalAnswerComplete ||
+    !isActive ||
+    (finalAnswerStreaming && !hasStreamingMessage)
+  );
+
+  // 当整轮已完成或正文已进入输出阶段时，activeCount 强制视为 0，杜绝状态残留导致的持续展开
+  const activeCount = isComplete
+    ? 0
+    : activities.filter((activity) =>
+        activity.status === "running" || activity.status === "pending" || activity.status === "waiting_approval",
+      ).length;
+
   const analysisBusy =
-    activeCount > 0 ||
-    hasStreamingMessage ||
-    (isActive && !finalAnswerStreaming && !finalAnswerComplete && !runCompleted);
+    !isComplete &&
+    (activeCount > 0 ||
+      hasStreamingMessage ||
+      (isActive && !finalAnswerStreaming && !finalAnswerComplete && !runCompleted));
+
   const settled = !analysisBusy && items.length > 0;
   // 展开与收缩策略：
   // 1. 过程进行中（思考、中间过程说明、工具调用等执行中，!settled）默认保持展开；
@@ -269,7 +291,6 @@ export function ProcessActivityGroup({
   }, [settled]);
 
   const expanded = manualExpanded ?? !settled;
-  const isComplete = settled || finalAnswerComplete || runCompleted || !isActive;
   const statusLabel = isComplete ? "已完成分析" : "正在分析";
 
   // 提取历史活动记录中的精确起始与结束时间，推导稳定的历史耗时（完全隔离当前系统时钟）
@@ -419,7 +440,8 @@ export function ProcessActivityGroup({
             const activity = item.activity;
             if (activity.kind === "subagent") {
               const detail = activity.detail as { name?: string; goal?: string; resultSummary?: string } | undefined;
-              const label = activity.status === "completed"
+              const isSubagentRunning = !isComplete && (activity.status === "running" || activity.status === "pending");
+              const label = activity.status === "completed" || isComplete
                 ? "完成了子任务"
                 : activity.status === "failed"
                   ? "子任务执行失败"
@@ -429,7 +451,7 @@ export function ProcessActivityGroup({
                 <div key={item.id} className="process-activity-enter text-[13px] text-[var(--color-text-secondary)]" style={staggerStyle}>
                   <div className="flex items-center gap-2.5">
                     <BrainCircuitIcon className="size-[18px] w-[18px] shrink-0 text-[var(--color-text-muted)]" />
-                    {activity.status === "running" || activity.status === "pending" ? <Shimmer as="span" duration={2} spread={3} className="font-medium">{label}</Shimmer> : <span>{label}</span>}
+                    {isSubagentRunning ? <Shimmer as="span" duration={2} spread={3} className="font-medium">{label}</Shimmer> : <span>{label}</span>}
                     {description && <span className="truncate">{description}</span>}
                   </div>
                   {detail?.resultSummary && (
@@ -441,7 +463,15 @@ export function ProcessActivityGroup({
               );
             }
 
-            return <ToolActivityRow key={item.id} itemId={item.id} activity={activity} style={staggerStyle} />;
+            return (
+              <ToolActivityRow
+                key={item.id}
+                itemId={item.id}
+                activity={activity}
+                style={staggerStyle}
+                isGroupComplete={isComplete}
+              />
+            );
           })}
         </div>
       )}

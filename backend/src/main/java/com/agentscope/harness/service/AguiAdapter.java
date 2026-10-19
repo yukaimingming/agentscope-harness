@@ -295,9 +295,11 @@ public class AguiAdapter {
             }
         }
 
-        // 处理 Todo 卡片
-        if (("write_todos".equals(toolName) || "todo_write".equals(toolName)) && parsedInput instanceof Map<?, ?> map) {
-            String todoId = "todo:" + runId;
+        // 处理 Todo 卡片（兼容 todo_write / write_todos / task_update 及各类参数别名）
+        boolean isTodoTool = "write_todos".equals(toolName) || "todo_write".equals(toolName)
+                || "update_todos".equals(toolName) || "todo_update".equals(toolName) || "task_update".equals(toolName);
+        if (parsedInput instanceof Map<?, ?> map && (isTodoTool || map.containsKey("todos") || map.containsKey("tasks") || map.containsKey("taskList"))) {
+            String todoId = "todo:" + threadId;
             Activity todoActivity = activities.get(todoId);
             if (todoActivity == null) {
                 todoActivity = new Activity(todoId, "todo", "running", "待办任务清单", System.currentTimeMillis());
@@ -305,19 +307,43 @@ public class AguiAdapter {
                 activities.put(todoId, todoActivity);
             }
             Object itemsObj = map.get("todos");
+            if (itemsObj == null) itemsObj = map.get("tasks");
+            if (itemsObj == null) itemsObj = map.get("items");
+            if (itemsObj == null) itemsObj = map.get("taskList");
+
             if (itemsObj instanceof List<?> list) {
                 List<TodoItem> items = new ArrayList<>();
                 int completed = 0;
                 for (Object item : list) {
                     if (item instanceof Map<?, ?> m) {
-                        String content = m.get("content") != null ? String.valueOf(m.get("content")) : "";
-                        String status = m.get("status") != null ? String.valueOf(m.get("status")) : "pending";
-                        items.add(new TodoItem(content, status));
-                        if ("completed".equalsIgnoreCase(status)) completed++;
+                        String content = "";
+                        if (m.get("content") != null) content = String.valueOf(m.get("content"));
+                        else if (m.get("task") != null) content = String.valueOf(m.get("task"));
+                        else if (m.get("description") != null) content = String.valueOf(m.get("description"));
+                        else if (m.get("title") != null) content = String.valueOf(m.get("title"));
+                        else if (m.get("name") != null) content = String.valueOf(m.get("name"));
+
+                        String rawStatus = m.get("status") != null ? String.valueOf(m.get("status")).trim().toLowerCase() : "";
+                        boolean isDone = "completed".equals(rawStatus) || "done".equals(rawStatus) || "finished".equals(rawStatus)
+                                || "success".equals(rawStatus) || "closed".equals(rawStatus) || "resolved".equals(rawStatus)
+                                || Boolean.TRUE.equals(m.get("done")) || "true".equalsIgnoreCase(String.valueOf(m.get("done")))
+                                || Boolean.TRUE.equals(m.get("completed")) || "true".equalsIgnoreCase(String.valueOf(m.get("completed")));
+
+                        boolean isInProgress = "in_progress".equals(rawStatus) || "running".equals(rawStatus) || "doing".equals(rawStatus) || "started".equals(rawStatus);
+
+                        String finalStatus = isDone ? "completed" : (isInProgress ? "in_progress" : "pending");
+                        items.add(new TodoItem(content, finalStatus));
+                        if (isDone) completed++;
                     }
                 }
                 todoActivity.setDetail(new TodoDetail(items, completed, items.size()));
-                todoActivity.setSubtitle("进行中 (" + completed + "/" + items.size() + ")");
+                String subtitle = (completed >= items.size() && !items.isEmpty())
+                        ? "已完成 (" + completed + "/" + items.size() + ")"
+                        : "进行中 (" + completed + "/" + items.size() + ")";
+                todoActivity.setSubtitle(subtitle);
+                if (completed >= items.size() && !items.isEmpty()) {
+                    todoActivity.setStatus("completed");
+                }
                 emitActivity(todoActivity);
             }
         } else if ("agent_spawn".equals(toolName) && parsedInput instanceof Map<?, ?> map) {
@@ -517,12 +543,26 @@ public class AguiAdapter {
         endReasoning();
         endText();
 
+        long now = System.currentTimeMillis();
+        // 兜底处理：将所有仍在运行中或等待中的工具/活动标记为完成，防止前端死卡在「正在调用」
+        for (Activity act : activities.values()) {
+            if ("running".equals(act.getStatus()) || "pending".equals(act.getStatus()) || "waiting_approval".equals(act.getStatus())) {
+                act.setStatus("completed");
+                act.setSubtitle("完成");
+                if (act.getEndedAt() == 0) {
+                    act.setEndedAt(now);
+                    act.setDurationMs(Math.max(0, now - act.getStartedAt()));
+                }
+                emitActivity(act);
+            }
+        }
+
         RunSnapshot snapshot = new RunSnapshot();
         snapshot.setStatus("completed");
         snapshot.setRunId(runId);
         snapshot.setThreadId(threadId);
         snapshot.setStartedAt(startedAt);
-        snapshot.setEndedAt(System.currentTimeMillis());
+        snapshot.setEndedAt(now);
         snapshot.setDurationMs(snapshot.getEndedAt() - startedAt);
         snapshot.setProgressNote("任务已圆满完成");
         emitRunSnapshot(snapshot);

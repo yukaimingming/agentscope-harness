@@ -107,9 +107,9 @@ public class HarnessAgentManager {
         try {
             // 1. 构建传输层与模型
             HttpTransportConfig transportConfig = HttpTransportConfig.builder()
-                    .connectTimeout(Duration.ofSeconds(15))
-                    .keepAliveDuration(Duration.ofSeconds(10))
-                    .maxIdleConnections(4)
+                    .connectTimeout(Duration.ofSeconds(60))
+                    .keepAliveDuration(Duration.ofSeconds(30))
+                    .maxIdleConnections(8)
                     .build();
 
             HttpTransport transport = JdkHttpTransport.builder()
@@ -186,6 +186,26 @@ public class HarnessAgentManager {
                     .userId(properties.getUserId())
                     .build();
 
+            // 解析用户前端选择的权限模式（ask: 请求批准 / auto: 自动确认 / full: 完全访问权限）
+            String permModeStr = (forwardedProps.containsKey("permissionMode") && forwardedProps.get("permissionMode") != null)
+                    ? String.valueOf(forwardedProps.get("permissionMode")).trim().toLowerCase()
+                    : "ask";
+
+            io.agentscope.core.permission.PermissionMode permMode = switch (permModeStr) {
+                case "full", "bypass", "dont_ask" -> io.agentscope.core.permission.PermissionMode.BYPASS;
+                case "auto", "accept_edits" -> io.agentscope.core.permission.PermissionMode.ACCEPT_EDITS;
+                case "explore" -> io.agentscope.core.permission.PermissionMode.EXPLORE;
+                default -> io.agentscope.core.permission.PermissionMode.DEFAULT;
+            };
+
+            try {
+                agent.setPermissionMode(ctx, permMode);
+                agent.setPermissionMode(threadId, properties.getUserId(), permMode);
+                log.info("会话 [{}] 应用权限模式: {} -> {}", threadId, permModeStr, permMode);
+            } catch (Exception pe) {
+                log.warn("设置 Agent 权限模式异常: {}", pe.getMessage());
+            }
+
             // 7. 构建本轮输入消息
             List<Msg> turn;
             if (input.getResume() != null && !input.getResume().isEmpty()) {
@@ -224,8 +244,12 @@ public class HarnessAgentManager {
             Disposable disposable = agent.streamEvents(turn, ctx)
                     .doOnNext(event -> {
                         if (event instanceof RequireUserConfirmEvent ce) {
-                            interrupted.set(true);
-                            confirmHold.set(ce.getToolCalls());
+                            if (!"full".equals(permModeStr) && !"bypass".equals(permModeStr) && !"dont_ask".equals(permModeStr)) {
+                                interrupted.set(true);
+                                confirmHold.set(ce.getToolCalls());
+                            } else {
+                                log.info("当前会话开启完全访问权限 [{}]，自动免审批继续调用: {}", threadId, ce.getToolCalls());
+                            }
                         }
                         adapter.onAgentEvent(event);
                     })

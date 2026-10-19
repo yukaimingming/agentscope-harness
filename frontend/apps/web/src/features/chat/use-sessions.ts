@@ -263,6 +263,19 @@ export function useSessions(initialThreadId: string, defaultWorkspace: string = 
   const createSession = useCallback((newId: string, workspaceRoot: string = ""): string => {
     const current = sessions.find((s) => s.id === activeSessionId);
     if (current && current.messageCount === 0 && current.title === "新对话") {
+      if (workspaceRoot && current.workspaceRoot !== workspaceRoot) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === current.id
+              ? {
+                  ...s,
+                  workspaceRoot,
+                  folderName: extractFolderName(workspaceRoot),
+                }
+              : s,
+          ),
+        );
+      }
       return current.id;
     }
 

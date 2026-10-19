@@ -153,30 +153,143 @@ public class WorkspaceService {
         }
     }
 
-    public List<Map<String, Object>> browseDirectory(String targetPath) {
+    /**
+     * 浏览指定目录，返回当前路径、父级路径、子文件夹列表及系统常用快捷路径（含盘符与桌面）。
+     */
+    public Map<String, Object> browse(String targetPath) {
         Path p = (targetPath != null && !targetPath.isBlank())
                 ? Paths.get(targetPath).toAbsolutePath().normalize()
                 : Paths.get(currentWorkspaceRoot);
 
-        List<Map<String, Object>> list = new ArrayList<>();
+        // 若路径不存在，回退到当前工作区或用户目录
+        if (!Files.exists(p) || !Files.isDirectory(p)) {
+            p = Paths.get(currentWorkspaceRoot);
+            if (!Files.exists(p)) {
+                p = Paths.get(System.getProperty("user.home"));
+            }
+        }
+
+        String current = p.toString();
+        String parent = p.getParent() != null ? p.getParent().toString() : null;
+
+        List<Map<String, Object>> folders = new ArrayList<>();
+        List<Map<String, Object>> entries = new ArrayList<>();
+
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(p)) {
             for (Path entry : stream) {
-                Map<String, Object> item = new HashMap<>();
-                item.put("name", entry.getFileName().toString());
-                item.put("path", entry.toAbsolutePath().toString());
-                item.put("isDirectory", Files.isDirectory(entry));
-                list.add(item);
+                try {
+                    String name = entry.getFileName() != null ? entry.getFileName().toString() : entry.toString();
+                    // 过滤隐藏文件与系统临时垃圾缓存目录（保留普通文件夹）
+                    if (name.startsWith("$") || name.equalsIgnoreCase("System Volume Information")) {
+                        continue;
+                    }
+                    boolean isDir = Files.isDirectory(entry);
+                    String absPath = entry.toAbsolutePath().normalize().toString();
+
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("name", name);
+                    item.put("path", absPath);
+                    item.put("isDirectory", isDir);
+                    entries.add(item);
+
+                    if (isDir) {
+                        Map<String, Object> folderItem = new HashMap<>();
+                        folderItem.put("name", name);
+                        folderItem.put("path", absPath);
+                        folders.add(folderItem);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取目录列表失败 [{}]: {}", current, e.getMessage());
+        }
+
+        // 文件夹按名称升序排序
+        folders.sort(Comparator.comparing(a -> String.valueOf(a.get("name")).toLowerCase()));
+        entries.sort((a, b) -> {
+            boolean aDir = Boolean.TRUE.equals(a.get("isDirectory"));
+            boolean bDir = Boolean.TRUE.equals(b.get("isDirectory"));
+            if (aDir != bDir) return aDir ? -1 : 1;
+            return String.valueOf(a.get("name")).compareToIgnoreCase(String.valueOf(b.get("name")));
+        });
+
+        // 生成系统常用快速入口（盘符、桌面、项目根、默认工作区）
+        List<Map<String, String>> quickPaths = getSystemQuickPaths();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("ok", true);
+        result.put("current", current);
+        result.put("currentPath", current); // 兼容旧接口
+        result.put("parent", parent);
+        result.put("folders", folders);
+        result.put("entries", entries);     // 兼容旧接口
+        result.put("quickPaths", quickPaths);
+        return result;
+    }
+
+    /**
+     * 获取系统预置的常用路径列表（默认工作区、桌面、主目录及各磁盘盘符）。
+     */
+    public List<Map<String, String>> getSystemQuickPaths() {
+        List<Map<String, String>> quick = new ArrayList<>();
+
+        // 1. 默认工作区
+        if (currentWorkspaceRoot != null && !currentWorkspaceRoot.isBlank()) {
+            quick.add(Map.of("name", "默认工作区", "path", currentWorkspaceRoot));
+        }
+
+        // 2. 项目工程根目录（若存在）
+        try {
+            Path projectRoot = Paths.get("").toAbsolutePath().normalize();
+            if (projectRoot.getParent() != null && "backend".equalsIgnoreCase(projectRoot.getFileName().toString())) {
+                projectRoot = projectRoot.getParent();
+            }
+            if (Files.exists(projectRoot)) {
+                quick.add(Map.of("name", "项目目录", "path", projectRoot.toString()));
             }
         } catch (Exception ignored) {
         }
-        return list;
+
+        // 3. 用户主目录与桌面
+        String userHome = System.getProperty("user.home");
+        if (userHome != null) {
+            Path homePath = Paths.get(userHome);
+            Path desktopPath = homePath.resolve("Desktop");
+            if (Files.exists(desktopPath)) {
+                quick.add(Map.of("name", "桌面", "path", desktopPath.toString()));
+            }
+            if (Files.exists(homePath)) {
+                quick.add(Map.of("name", "用户目录", "path", homePath.toString()));
+            }
+        }
+
+        // 4. Windows 磁盘盘符（C:、D:等）
+        File[] roots = File.listRoots();
+        if (roots != null) {
+            for (File root : roots) {
+                String rootPath = root.getAbsolutePath();
+                String displayName = rootPath.replace("\\", "");
+                quick.add(Map.of("name", displayName + " 盘", "path", rootPath));
+            }
+        }
+
+        return quick;
     }
 
-    public void mkdir(String parentDir, String dirName) throws IOException {
+    public List<Map<String, Object>> browseDirectory(String targetPath) {
+        Map<String, Object> res = browse(targetPath);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> entries = (List<Map<String, Object>>) res.get("entries");
+        return entries != null ? entries : Collections.emptyList();
+    }
+
+    public String mkdir(String parentDir, String dirName) throws IOException {
         Path parent = (parentDir != null && !parentDir.isBlank())
                 ? Paths.get(parentDir).toAbsolutePath().normalize()
                 : Paths.get(currentWorkspaceRoot);
-        Path target = parent.resolve(dirName);
+        Path target = parent.resolve(dirName).normalize();
         Files.createDirectories(target);
+        return target.toString();
     }
 }

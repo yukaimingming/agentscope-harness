@@ -8,6 +8,7 @@ Thumbs.db
 
 # 数据与密钥
 .data/
+workspace/
 .agentscope/state/
 .agentscope/workspace/
 backend/.agentscope/workspace/

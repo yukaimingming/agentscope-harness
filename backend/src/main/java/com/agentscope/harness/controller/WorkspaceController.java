@@ -55,6 +55,17 @@ public class WorkspaceController {
         }
     }
 
+    @GetMapping("/current")
+    public ResponseEntity<Map<String, Object>> getCurrent() {
+        String root = workspaceService.getCurrentWorkspaceRoot();
+        return ResponseEntity.ok(Map.of(
+                "ok", true,
+                "current", root,
+                "currentPath", root,
+                "quickPaths", workspaceService.getSystemQuickPaths()
+        ));
+    }
+
     @PostMapping("/mkdir")
     public ResponseEntity<Map<String, Object>> createDir(@RequestBody Map<String, String> body) {
         String parentDir = body.get("parentDir");
@@ -63,9 +74,14 @@ public class WorkspaceController {
             return ResponseEntity.badRequest().body(Map.of("error", "缺少文件夹名称"));
         }
         try {
-            workspaceService.mkdir(parentDir, dirName);
+            String createdPath = workspaceService.mkdir(parentDir, dirName);
             var tree = workspaceService.getWorkspaceTree(workspaceService.getCurrentWorkspaceRoot(), 3);
-            return ResponseEntity.ok(Map.of("ok", true, "nodes", tree));
+            return ResponseEntity.ok(Map.of(
+                    "ok", true,
+                    "createdPath", createdPath,
+                    "path", createdPath,
+                    "nodes", tree
+            ));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "创建文件夹失败: " + e.getMessage()));
         }
@@ -73,12 +89,7 @@ public class WorkspaceController {
 
     @GetMapping("/browse")
     public ResponseEntity<Map<String, Object>> browse(@RequestParam(required = false) String path) {
-        String target = (path != null && !path.isBlank()) ? path : workspaceService.getCurrentWorkspaceRoot();
-        var entries = workspaceService.browseDirectory(target);
-        return ResponseEntity.ok(Map.of(
-                "ok", true,
-                "currentPath", target,
-                "entries", entries
-        ));
+        var result = workspaceService.browse(path);
+        return ResponseEntity.ok(result);
     }
 }

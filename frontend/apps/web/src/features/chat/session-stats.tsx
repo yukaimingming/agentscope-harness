@@ -3,6 +3,7 @@ import { type Activity, type RunTokenUsage } from "@deepagent/shared";
 import type { ChatMessage } from "./client-reducer.js";
 import { cn } from "../../lib/utils.js";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip.js";
+import { BarChart2Icon, ClockIcon, ZapIcon, DatabaseIcon, LayersIcon } from "lucide-react";
 
 /** DeepSeek Harness 官方会话级统计指标 */
 export interface SessionStats {
@@ -244,18 +245,33 @@ export const StatsLine = memo(function StatsLine({
   const rootRef = useRef<HTMLDivElement>(null);
   const [truncated, setTruncated] = useState(false);
 
-  // 组织分组内容（完全对齐 DeepSeek Harness StatsLine）
-  const groups: string[] = [];
+  // 组织带图标的分组内容
+  interface StatGroupItem {
+    id: string;
+    icon: React.ReactNode;
+    text: string;
+  }
+  const groups: StatGroupItem[] = [];
 
   if (stats.steps > 0 || stats.turns > 0) {
     // 分组 1：轮次与步骤
-    groups.push(`${stats.turns} 轮 · ${stats.steps} 步`);
+    groups.push({
+      id: "turns-steps",
+      icon: <LayersIcon className="size-3 text-zinc-400 shrink-0 mr-1" />,
+      text: `${stats.turns} 轮 · ${stats.steps} 步`,
+    });
 
     // 分组 2：LLM 与工具执行耗时
     const durations: string[] = [];
     if (stats.llmMs > 0) durations.push(`LLM ${formatDuration(stats.llmMs)}`);
     if (stats.toolMs > 0) durations.push(`工具 ${formatDuration(stats.toolMs)}`);
-    if (durations.length > 0) groups.push(durations.join(" · "));
+    if (durations.length > 0) {
+      groups.push({
+        id: "durations",
+        icon: <ClockIcon className="size-3 text-zinc-400 shrink-0 mr-1" />,
+        text: durations.join(" · "),
+      });
+    }
 
     // 分组 3：首 Token 延迟与吞吐速率
     const speeds: string[] = [];
@@ -266,7 +282,13 @@ export const StatsLine = memo(function StatsLine({
     if (stats.tokensPerSecond > 0) {
       speeds.push(`${formatTokensPerSecond(stats.tokensPerSecond)} tok/s`);
     }
-    if (speeds.length > 0) groups.push(speeds.join(" · "));
+    if (speeds.length > 0) {
+      groups.push({
+        id: "speeds",
+        icon: <ZapIcon className="size-3 text-amber-400/90 shrink-0 mr-1" />,
+        text: speeds.join(" · "),
+      });
+    }
   }
 
   // 分组 4：缓存命中率与 Token 消耗
@@ -277,10 +299,14 @@ export const StatsLine = memo(function StatsLine({
     }
     tokenParts.push(`输入 ${formatTokens(usage.inputTokens)}`);
     tokenParts.push(`输出 ${formatTokens(usage.outputTokens)}`);
-    groups.push(tokenParts.join(" · "));
+    groups.push({
+      id: "tokens",
+      icon: <DatabaseIcon className="size-3 text-cyan-400/90 shrink-0 mr-1" />,
+      text: tokenParts.join(" · "),
+    });
   }
 
-  const line = groups.join(" | ");
+  const line = groups.map((g) => g.text).join(" | ");
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -299,12 +325,14 @@ export const StatsLine = memo(function StatsLine({
     <div
       ref={rootRef}
       title={truncated ? line : undefined}
-      className="flex items-center justify-center text-[11px] leading-5 text-zinc-500 select-none px-4 py-1.5 mx-auto max-w-4xl overflow-hidden text-ellipsis whitespace-nowrap animate-in fade-in duration-150"
+      className="flex items-center justify-center text-[11px] leading-5 text-zinc-500 select-none px-4 py-1 mx-auto max-w-4xl overflow-hidden text-ellipsis whitespace-nowrap animate-in fade-in duration-150"
     >
+      <BarChart2Icon className="size-3 text-zinc-500 shrink-0 mr-1.5" />
       {groups.map((group, i) => (
-        <span key={group} className="inline-flex items-center">
-          {i > 0 && <span className="text-zinc-700 mx-2.5 font-light" aria-hidden="true">|</span>}
-          <span className="font-mono tabular-nums">{group}</span>
+        <span key={group.id} className="inline-flex items-center">
+          {i > 0 && <span className="text-zinc-700 mx-2 font-light select-none" aria-hidden="true">|</span>}
+          {group.icon}
+          <span className="font-mono tabular-nums">{group.text}</span>
         </span>
       ))}
     </div>
@@ -382,7 +410,7 @@ export const ContextMeter = memo(function ContextMeter({
         title={`上下文占用 ${percent}%（${formatTokens(usedTokens)} / ${formatTokens(contextWindow)}）`}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "context-meter-btn flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer select-none",
+          "context-meter-btn flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer select-none whitespace-nowrap shrink-0",
           usage
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
             : "border-zinc-700/60 bg-zinc-800/50 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
@@ -412,7 +440,10 @@ export const ContextMeter = memo(function ContextMeter({
             className={usage ? "text-emerald-400" : "text-zinc-500"}
           />
         </svg>
-        <span className="font-sans font-medium">用量 {percent > 0 ? `${percent}%` : ""}</span>
+        <span className="font-sans font-medium">
+          <span className="hidden sm:inline">用量 </span>
+          {percent > 0 ? `${percent}%` : ""}
+        </span>
       </button>
 
       {/* 弹出的详细统计面板（完全还原 DeepSeek Harness 布局） */}

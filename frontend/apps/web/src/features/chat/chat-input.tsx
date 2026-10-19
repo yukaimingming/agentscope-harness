@@ -8,7 +8,7 @@
  * 4. 思考等级与推理强度升级为标准下拉选择（Dropdown / Select）样式，严格遵守模型能力约束（如 step-3.5-flash-2603 仅限 low / high）。
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback, type KeyboardEventHandler } from "react";
 import {
   ChevronDownIcon,
   CheckIcon,
@@ -23,6 +23,11 @@ import {
   TriangleAlertIcon,
   TerminalSquareIcon,
   GlobeIcon,
+  SquarePenIcon,
+  Trash2Icon,
+  ArrowUpIcon,
+  ClockIcon,
+  ZapIcon,
 } from "lucide-react";
 import {
   PromptInput,
@@ -48,16 +53,21 @@ import {
   type RunTokenUsage,
 } from "@deepagent/shared";
 import type { ChatMessage } from "./client-reducer.js";
-import { StatsLine, ContextMeter } from "./session-stats.js";
+import { ContextMeter, StatsLine } from "./session-stats.js";
 import { cn } from "../../lib/utils.js";
 import { extractFolderName } from "./use-sessions.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
 import { TodoCard } from "./todo-card.js";
 
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  attachments: ChatAttachment[];
+  createdAt: number;
+}
+
 interface ChatInputProps {
-  /** 当前会话消息列表，用于计算精准统计与 Token 消耗 */
   messages?: ChatMessage[];
-  /** 当前会话活动列表，用于计算工具耗时与步骤 */
   activities?: Activity[];
   onSend: (content: string, attachments: ChatAttachment[]) => void;
   onStop: () => void;
@@ -144,23 +154,469 @@ function PromptInputAttachmentsDisplay({
   );
 }
 
-function PromptInputSubmitWithAttachments({
-  hasText,
-  isRunning,
-  onStop,
-}: {
+interface PromptInputComposerProps {
+  text: string;
+  setText: (v: string) => void;
   hasText: boolean;
   isRunning: boolean;
+  disabled: boolean;
+  queuedPrompts: QueuedPrompt[];
+  onEnqueue: (text: string, files: ChatAttachment[]) => void;
+  onSteer: (text: string, files: ChatAttachment[]) => void;
+  onExecuteQueued: (id: string) => void;
+  onSubmit: (message: PromptInputMessage) => void;
+  onAttachmentError: (error: { code: "max_files" | "max_file_size" | "accept" }) => void;
+  setPreviewAttachment: (file: ChatAttachment | null) => void;
+  permissionMode: PermissionMode;
+  isPermissionDropdownOpen: boolean;
+  setIsPermissionDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  selectPermissionMode: (mode: PermissionMode) => void;
+  permissionDropdownRef: React.RefObject<HTMLDivElement | null>;
+  currentModel?: string | null;
+  modelStatus: string;
+  isModelDropdownOpen: boolean;
+  setIsModelDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  availableModels: string[];
+  onSelectModel?: (model: string) => void;
+  onOpenSettings?: () => void;
+  modelDropdownRef: React.RefObject<HTMLDivElement | null>;
+  messages: ChatMessage[];
+  activities: Activity[];
+  usage?: RunTokenUsage | null;
+  reasoningUnsupported: boolean;
+  effortDropdownRef: React.RefObject<HTMLDivElement | null>;
+  isEffortDropdownOpen: boolean;
+  setIsEffortDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  effortLabel: string;
+  fallbackApplied: boolean;
+  requestedEffort?: ReasoningEffort;
+  effort: ReasoningEffort;
+  supportedEfforts: readonly ReasoningEffort[];
+  onEffortChange: (effort: ReasoningEffort) => void;
   onStop: () => void;
-}) {
+}
+
+function PromptInputComposer({
+  text,
+  setText,
+  hasText,
+  isRunning,
+  disabled,
+  queuedPrompts,
+  onEnqueue,
+  onSteer,
+  onExecuteQueued,
+  onSubmit,
+  onAttachmentError,
+  setPreviewAttachment,
+  permissionMode,
+  isPermissionDropdownOpen,
+  setIsPermissionDropdownOpen,
+  selectPermissionMode,
+  permissionDropdownRef,
+  currentModel,
+  modelStatus,
+  isModelDropdownOpen,
+  setIsModelDropdownOpen,
+  availableModels,
+  onSelectModel,
+  onOpenSettings,
+  modelDropdownRef,
+  messages,
+  activities,
+  usage,
+  reasoningUnsupported,
+  effortDropdownRef,
+  isEffortDropdownOpen,
+  setIsEffortDropdownOpen,
+  effortLabel,
+  fallbackApplied,
+  requestedEffort,
+  effort,
+  supportedEfforts,
+  onEffortChange,
+  onStop,
+}: PromptInputComposerProps) {
   const attachments = usePromptInputAttachments();
+  const hasContent = hasText || attachments.files.length > 0;
+
+  const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+Enter / Cmd+Enter: 立即引导
+        e.preventDefault();
+        const currentFiles = attachments.files as ChatAttachment[];
+        if (hasContent) {
+          onSteer(text, currentFiles);
+          attachments.clear();
+        } else if (queuedPrompts.length > 0) {
+          onExecuteQueued(queuedPrompts[0].id);
+        }
+        return;
+      }
+
+      if (isRunning) {
+        // 模型正在生成中，普通 Enter 默认为排队
+        const currentFiles = attachments.files as ChatAttachment[];
+        if (hasContent) {
+          e.preventDefault();
+          onEnqueue(text, currentFiles);
+          attachments.clear();
+        }
+        return;
+      }
+    }
+  };
+
+  const placeholderText =
+    queuedPrompts.length > 0
+      ? "Cmd/Ctrl+Enter 快捷发送全部排队消息（或按 Enter 继续排队）"
+      : isRunning
+        ? "模型回复中... 输入内容按 Enter 排队，Ctrl+Enter 立即引导"
+        : "输入任务描述...（Enter 发送，Shift+Enter 换行）";
+
   return (
-    <PromptInputSubmit
-      disabled={!hasText && attachments.files.length === 0 && !isRunning}
-      status={isRunning ? "streaming" : undefined}
-      onStop={onStop}
-      className="size-8 rounded-lg bg-zinc-100 text-black hover:bg-white disabled:opacity-30 disabled:bg-zinc-800 disabled:text-zinc-500 transition-colors shadow-none"
-    />
+    <PromptInput
+      onSubmit={onSubmit}
+      accept={ACCEPTED_ATTACHMENT_TYPES}
+      multiple
+      globalDrop
+      maxFiles={MAX_ATTACHMENT_COUNT}
+      maxFileSize={MAX_ATTACHMENT_SIZE}
+      onError={onAttachmentError}
+      className="chat-prompt-input rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800/80 dark:bg-[#18181b] shadow-xs dark:shadow-md focus-within:border-zinc-400 dark:focus-within:border-zinc-600 focus-within:ring-0 transition-colors overflow-hidden relative outline-none"
+    >
+      <PromptInputHeader className="px-3 pt-3">
+        <PromptInputAttachmentsDisplay onPreview={(f) => setPreviewAttachment(f)} />
+      </PromptInputHeader>
+      <PromptInputBody>
+        <PromptInputTextarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholderText}
+          className="chat-prompt-textarea min-h-[50px] max-h-[220px] px-3.5 py-2.5 text-[13.5px] text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none border-0 shadow-none focus-visible:ring-0 bg-transparent"
+        />
+      </PromptInputBody>
+
+      {/* 底部工具条与提交按钮 */}
+      <PromptInputFooter className="flex items-center justify-between px-3 pb-2.5 pt-1.5 border-0 border-none overflow-hidden relative">
+        <PromptInputTools className="flex-1 min-w-0 flex items-center gap-1.5 text-[12px] flex-nowrap overflow-hidden">
+          <PromptInputActionMenu>
+            <PromptInputActionMenuTrigger
+              aria-label="添加图片或文件"
+              title="添加图片或文件"
+              className="chat-action-menu-btn size-8 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/70 dark:hover:text-white border-0 border-none outline-none focus:outline-none focus-visible:ring-0 shadow-none transition-colors shrink-0"
+            />
+            <PromptInputActionMenuContent className="border-zinc-200 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
+              <PromptInputActionAddAttachments label="添加图片或文件" />
+            </PromptInputActionMenuContent>
+          </PromptInputActionMenu>
+
+          {/* 运行权限选择：只影响后续发起的运行。 */}
+          <div className="relative shrink-0" ref={permissionDropdownRef}>
+            <button
+              type="button"
+              data-testid="permission-mode-selector"
+              data-permission-mode={permissionMode}
+              aria-label={`权限模式：${PERMISSION_OPTIONS.find((option) => option.mode === permissionMode)?.label ?? "请求批准"}`}
+              onClick={() => {
+                setIsPermissionDropdownOpen((open) => !open);
+                setIsModelDropdownOpen(false);
+                setIsEffortDropdownOpen(false);
+              }}
+              className={cn(
+                "composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 transition-colors border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap shrink-0",
+                permissionMode === "full"
+                  ? "text-red-500 hover:bg-red-500/10 hover:text-red-400 font-semibold"
+                  : "text-zinc-300 hover:bg-zinc-800/70 hover:text-white font-medium",
+              )}
+              title="选择本次及后续运行的工具审批方式"
+            >
+              {(() => {
+                const option = PERMISSION_OPTIONS.find((item) => item.mode === permissionMode) ?? PERMISSION_OPTIONS[0]!;
+                return <option.Icon className={cn("size-3.5 shrink-0", permissionMode === "full" ? "text-red-500" : "text-zinc-400")} />;
+              })()}
+              <span className={cn("text-[11.5px] whitespace-nowrap", permissionMode === "full" ? "text-red-500 font-semibold" : "font-medium")}>
+                {PERMISSION_OPTIONS.find((option) => option.mode === permissionMode)?.label ?? "请求批准"}
+              </span>
+              <ChevronDownIcon className={cn("size-3 transition-transform shrink-0", permissionMode === "full" ? "text-red-500/80" : "text-zinc-500", isPermissionDropdownOpen && "rotate-180")} />
+            </button>
+
+            {isPermissionDropdownOpen && (
+              <div className="workspace-dropdown-panel composer-menu absolute bottom-full left-0 z-50 mb-2 w-[min(21rem,calc(100vw-2rem))] rounded-xl border border-zinc-700/70 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                {PERMISSION_OPTIONS.map(({ mode, label, description, Icon }) => {
+                  const isSelected = permissionMode === mode;
+                  const isFull = mode === "full";
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      data-testid={`permission-mode-${mode}`}
+                      data-permission-mode={mode}
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        selectPermissionMode(mode);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors",
+                        isFull
+                          ? isSelected
+                            ? "bg-red-500/15 border border-red-500/35 text-red-500 shadow-xs"
+                            : "text-red-500 hover:bg-red-500/10 border border-transparent"
+                          : isSelected
+                            ? "bg-[#2f2f35] text-zinc-100 border border-transparent"
+                            : "hover:bg-[#2f2f35] text-zinc-300 border border-transparent",
+                      )}
+                    >
+                      <Icon className={cn("size-5 shrink-0", isFull ? "text-red-500" : "text-zinc-300")} />
+                      <span className="min-w-0 flex-1">
+                        <span className={cn("block text-[13px] font-medium", isFull ? "text-red-500 font-semibold" : "")}>
+                          {label}
+                        </span>
+                        <span className={cn("block text-[11.5px] leading-snug", isFull ? "text-red-400" : "text-zinc-400")}>
+                          {description}
+                        </span>
+                      </span>
+                      {isSelected && <CheckIcon className={cn("size-4 shrink-0", isFull ? "text-red-500" : "text-zinc-200")} />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 1. 模型选择下拉菜单 */}
+          <div className="relative shrink-0" ref={modelDropdownRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsModelDropdownOpen((v) => !v);
+                setIsEffortDropdownOpen(false);
+                setIsPermissionDropdownOpen(false);
+              }}
+              className="composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/70 dark:hover:text-white border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap shrink-0"
+              title="点击下拉切换当前模型"
+            >
+              <span className="size-1.5 rounded-full bg-emerald-400 shrink-0" />
+              <span className="font-mono truncate max-w-[120px] text-[11.5px] whitespace-nowrap">
+                {currentModel || modelStatus}
+              </span>
+              <ChevronDownIcon className={cn("size-3 text-zinc-500 shrink-0 ml-0.5 transition-transform", isModelDropdownOpen && "rotate-180")} />
+            </button>
+
+            {/* 弹出式模型下拉列表 */}
+            {isModelDropdownOpen && (
+              <div className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-64 rounded-xl border border-zinc-800 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-2 py-1 text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center justify-between">
+                  <span>选择模型</span>
+                  {availableModels.length > 0 && <span>({availableModels.length})</span>}
+                </div>
+
+                <div className="max-h-48 overflow-y-auto space-y-0.5 my-1">
+                  {availableModels.length === 0 ? (
+                    <div className="px-2 py-2 text-[11.5px] text-zinc-500 text-center">
+                      暂无可用模型，请在设置中配置
+                    </div>
+                  ) : (
+                    availableModels.map((m) => {
+                      const isSelected = currentModel === m;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => {
+                            onSelectModel?.(m);
+                            setIsModelDropdownOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[12px] font-mono text-left transition-colors ${
+                            isSelected
+                              ? "bg-[#2f2f35] text-white font-medium"
+                              : "text-zinc-400 hover:bg-[#2f2f35] hover:text-zinc-200"
+                          }`}
+                        >
+                          <span className="truncate">{m}</span>
+                          {isSelected && <CheckIcon className="size-3 text-emerald-400 shrink-0" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                {onOpenSettings && (
+                  <div className="pt-1 border-t border-zinc-800/80">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsModelDropdownOpen(false);
+                        onOpenSettings();
+                      }}
+                      className="flex w-full items-center gap-1.5 px-2 py-1 text-[11.5px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 rounded transition-colors"
+                    >
+                      <SettingsIcon className="size-3 text-zinc-500" />
+                      <span>管理模型与提供商...</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 1.5 参考 Microsoft agent 样式：点击才显示的 ContextMeter 环形占用率仪表圈与上下文构成/用量面板 */}
+          <ContextMeter
+            messages={messages}
+            activities={activities}
+            providedUsage={usage}
+          />
+
+          {/* 2. 思考等级下拉选择样式 */}
+          <div className="relative shrink-0" ref={effortDropdownRef}>
+            <button
+              type="button"
+              disabled={reasoningUnsupported}
+              onClick={() => {
+                setIsEffortDropdownOpen((v) => !v);
+                setIsModelDropdownOpen(false);
+                setIsPermissionDropdownOpen(false);
+              }}
+              className={cn(
+                "composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/70 border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap shrink-0",
+                reasoningUnsupported ? "opacity-40 cursor-not-allowed text-zinc-400 dark:text-zinc-600" : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+              )}
+              title={
+                reasoningUnsupported
+                  ? "当前模型不支持调节思考等级"
+                  : fallbackApplied
+                    ? `已自动降级：当前模型不支持「${requestedEffort === "high" ? "高" : requestedEffort === "medium" ? "中" : "低"}」档位，实际使用「${effortLabel}」`
+                    : "点击切换思考等级"
+              }
+            >
+              <BrainIcon className="size-3 text-zinc-400 shrink-0" />
+              <span className="text-[11.5px] font-medium whitespace-nowrap">
+                <span className="hidden xl:inline">思考: </span>
+                {reasoningUnsupported ? "无" : effortLabel}
+              </span>
+              {fallbackApplied && (
+                <span
+                  className="size-1.5 rounded-full bg-amber-400 shrink-0"
+                  aria-label="推理强度已降级"
+                />
+              )}
+              <ChevronDownIcon className={cn("size-3 text-zinc-500 shrink-0 ml-0.5 transition-transform", isEffortDropdownOpen && "rotate-180")} />
+            </button>
+
+            {/* 弹出式思考等级下拉列表 */}
+            {isEffortDropdownOpen && (
+              <div className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-44 rounded-xl border border-zinc-800 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-2 py-1 text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
+                  思考等级 / 推理强度
+                </div>
+
+                {fallbackApplied && (
+                  <div className="mx-1 mb-1 rounded-md bg-amber-400/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-300/90">
+                    已自动降级：当前模型不支持
+                    「{requestedEffort === "high" ? "高" : requestedEffort === "medium" ? "中" : "低"}」
+                    档位，本次运行实际使用「{effortLabel}」。
+                  </div>
+                )}
+
+                <div className="space-y-0.5 my-1">
+                  {REASONING_EFFORTS.map((option) => {
+                    const supported = supportedEfforts.includes(option);
+                    const isSelected = effort === option;
+                    const title = option === "high" ? "高 (high)" : option === "medium" ? "中 (medium)" : "低 (low)";
+                    const desc = option === "high" ? "深度多步思考" : option === "medium" ? "均衡推理与速度" : "快速响应思考";
+
+                    if (!supported) {
+                      return (
+                        <div
+                          key={option}
+                          className="flex items-center justify-between px-2 py-1.5 rounded-md text-[11.5px] text-zinc-600 cursor-not-allowed select-none"
+                          title="当前模型不支持此档位（如 step-3.5-flash-2603 仅限低与高）"
+                        >
+                          <span>{title}</span>
+                          <span className="text-[10px] text-zinc-600">不支持</span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => {
+                          onEffortChange(option);
+                          setIsEffortDropdownOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[12px] text-left transition-colors ${
+                          isSelected
+                            ? "bg-[#2f2f35] text-white font-medium"
+                            : "text-zinc-400 hover:bg-[#2f2f35] hover:text-zinc-200"
+                        }`}
+                      >
+                        <div className="flex flex-col">
+                          <span>{title}</span>
+                          <span className="text-[10.5px] text-zinc-500 font-normal">{desc}</span>
+                        </div>
+                        {isSelected && <CheckIcon className="size-3 text-emerald-400 shrink-0 ml-1" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </PromptInputTools>
+
+        {/* 右侧：当正在回复中且用户输入了新内容时，展示排队与立即引导操作按钮；否则显示标准 PromptInputSubmit */}
+        {isRunning && hasContent ? (
+          <div className="flex items-center gap-1 shrink-0 ml-auto pl-1.5 z-10 animate-in fade-in duration-100">
+            <button
+              type="button"
+              data-testid="chat-queue-prompt-btn"
+              onClick={() => {
+                onEnqueue(text, attachments.files as ChatAttachment[]);
+                attachments.clear();
+              }}
+              title="排队（Enter）：等待当前回复完成后自动发送"
+              className="inline-flex items-center gap-1 h-7 px-2 rounded-md bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300/80 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 text-[11px] font-medium transition-colors border dark:border-zinc-700/60 shadow-xs cursor-pointer select-none whitespace-nowrap"
+            >
+              <ClockIcon className="size-3 text-zinc-500 dark:text-zinc-400" />
+              <span>排队</span>
+            </button>
+            <button
+              type="button"
+              data-testid="chat-steer-prompt-btn"
+              onClick={() => {
+                onSteer(text, attachments.files as ChatAttachment[]);
+                attachments.clear();
+              }}
+              title="立即引导（Ctrl+Enter）：打断当前回复并立即执行此提示词"
+              className="inline-flex items-center gap-1 h-7 px-2 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:text-emerald-300 text-[11px] font-medium transition-colors border dark:border-emerald-500/40 shadow-xs cursor-pointer select-none whitespace-nowrap"
+            >
+              <ZapIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
+              <span>立即引导</span>
+            </button>
+            <button
+              type="button"
+              data-testid="chat-stop-prompt-btn"
+              onClick={onStop}
+              title="停止当前回复"
+              className="size-7 rounded-md flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 text-zinc-600 hover:text-red-500 border border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-400 dark:hover:text-red-400 dark:border-zinc-700/60 transition-colors cursor-pointer select-none shrink-0"
+            >
+              <span className="size-2 rounded-[2px] bg-red-500 dark:bg-red-400" />
+            </button>
+          </div>
+        ) : (
+          <PromptInputSubmit
+            disabled={!hasText && attachments.files.length === 0 && !isRunning}
+            status={isRunning ? "streaming" : undefined}
+            onStop={onStop}
+            className="chat-submit-btn size-8 rounded-lg transition-colors shadow-none border-0 border-none outline-none focus:outline-none focus-visible:ring-0 bg-zinc-900 text-white hover:bg-black dark:bg-zinc-100 dark:text-black dark:hover:bg-white disabled:opacity-30 disabled:bg-zinc-200 disabled:text-zinc-400 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+          />
+        )}
+      </PromptInputFooter>
+    </PromptInput>
   );
 }
 
@@ -183,17 +639,20 @@ export function ChatInput({
   workspaceRoot,
   customWorkspaces = [],
   onSelectWorkspace,
-  messages = [],
-  activities = [],
   onOpenFolderPicker,
   usage,
   todoActivity,
   permissionMode,
   onPermissionModeChange,
+  messages = [],
+  activities = [],
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<ChatAttachment | null>(null);
+
+  // 待办任务列表展开状态
+  const [isTodoExpanded, setIsTodoExpanded] = useState(false);
 
   // 工作区下拉选择状态
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
@@ -211,6 +670,78 @@ export function ChatInput({
   const permissionDropdownRef = useRef<HTMLDivElement>(null);
   const [showFullAccessConfirmation, setShowFullAccessConfirmation] = useState(false);
 
+  // 提示词排队队列状态
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const prevIsRunningRef = useRef(isRunning);
+
+  // 当模型从回复中转为空闲时，若有排队中的提示词，按序自动接力发送下一条
+  useEffect(() => {
+    if (prevIsRunningRef.current && !isRunning && queuedPrompts.length > 0) {
+      const [nextPrompt, ...rest] = queuedPrompts;
+      setQueuedPrompts(rest);
+      const timer = setTimeout(() => {
+        onSend(nextPrompt.text || "请查看附件中的内容。", nextPrompt.attachments);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+    prevIsRunningRef.current = isRunning;
+  }, [isRunning, queuedPrompts, onSend]);
+
+  // 排队提示词入队
+  const handleEnqueue = useCallback((content: string, files: ChatAttachment[]) => {
+    const trimmed = content.trim();
+    if (!trimmed && files.length === 0) return;
+    const item: QueuedPrompt = {
+      id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      text: trimmed,
+      attachments: [...files],
+      createdAt: Date.now(),
+    };
+    setQueuedPrompts((prev) => [...prev, item]);
+    setText("");
+    setAttachmentError(null);
+  }, []);
+
+  // 立即引导（打断当前回复并立即以此提示词发送）
+  const handleSteer = useCallback((content: string, files: ChatAttachment[]) => {
+    const trimmed = content.trim();
+    if (!trimmed && files.length === 0) return;
+    if (isRunning) {
+      onStop();
+    }
+    setTimeout(() => {
+      onSend(trimmed || "请查看附件中的内容。", files);
+    }, 150);
+    setText("");
+    setAttachmentError(null);
+  }, [isRunning, onStop, onSend]);
+
+  // 从队列编辑某一条（取回输入框供修改并移出队列）
+  const handleEditQueued = useCallback((id: string) => {
+    const item = queuedPrompts.find((p) => p.id === id);
+    if (!item) return;
+    setText(item.text);
+    setQueuedPrompts((prev) => prev.filter((p) => p.id !== id));
+  }, [queuedPrompts]);
+
+  // 从队列删除某一条
+  const handleDeleteQueued = useCallback((id: string) => {
+    setQueuedPrompts((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  // 立即发送执行某一条排队条目
+  const handleExecuteQueued = useCallback((id: string) => {
+    const item = queuedPrompts.find((p) => p.id === id);
+    if (!item) return;
+    setQueuedPrompts((prev) => prev.filter((p) => p.id !== id));
+    if (isRunning) {
+      onStop();
+    }
+    setTimeout(() => {
+      onSend(item.text || "请查看附件中的内容。", item.attachments);
+    }, 150);
+  }, [queuedPrompts, isRunning, onStop, onSend]);
+
   const selectPermissionMode = (mode: PermissionMode) => {
     setIsPermissionDropdownOpen(false);
     if (mode === "full" && permissionMode !== "full") {
@@ -224,13 +755,11 @@ export function ChatInput({
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
-      const clickedTodoCard = todoCardRef.current?.contains(target) === true;
-      if (
-        workspaceDropdownRef.current &&
-        !workspaceDropdownRef.current.contains(target) &&
-        !clickedTodoCard
-      ) {
+      if (workspaceDropdownRef.current && !workspaceDropdownRef.current.contains(target)) {
         setIsWorkspaceDropdownOpen(false);
+      }
+      if (todoCardRef.current && !todoCardRef.current.contains(target)) {
+        setIsTodoExpanded(false);
       }
       if (modelDropdownRef.current && !modelDropdownRef.current.contains(target)) {
         setIsModelDropdownOpen(false);
@@ -251,7 +780,14 @@ export function ChatInput({
   const handleSubmit = (message: PromptInputMessage) => {
     const content = (message.text || text).trim();
     const attachments = message.files;
-    if ((content.length > 0 || attachments.length > 0) && !isRunning && !disabled) {
+    // 如果在模型生成回复中触发提交，默认进行安全排队
+    if (isRunning) {
+      if (content.length > 0 || attachments.length > 0) {
+        handleEnqueue(content, attachments as ChatAttachment[]);
+      }
+      return;
+    }
+    if ((content.length > 0 || attachments.length > 0) && !disabled) {
       const totalBytes = attachments.reduce((total, file) => {
         const payload = file.url.match(/^data:[^;,]+;base64,([\s\S]+)$/)?.[1] ?? "";
         return total + Math.floor((payload.length * 3) / 4);
@@ -286,424 +822,249 @@ export function ChatInput({
   const currentWorkspacePath = isDirectChat ? "" : workspaceRoot;
 
   return (
-    <div className="shrink-0 bg-black px-4 py-4">
+    <div className="shrink-0 bg-white dark:bg-black px-4 py-4 transition-colors">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="mb-2 flex min-w-0 items-end gap-2">
-          {/* 工作区选择器保持在左侧；待办状态在其右侧同行展示。 */}
+        <div className="mb-2 flex min-w-0 items-center gap-2">
+          {/* 工作区选择器保持在左侧 */}
           <div className="relative flex w-fit shrink-0 items-center" ref={workspaceDropdownRef}>
-          <button
-            type="button"
-            data-testid="workspace-mode-selector"
-            onClick={() => {
-              setIsWorkspaceDropdownOpen((v) => !v);
-              setIsModelDropdownOpen(false);
-              setIsEffortDropdownOpen(false);
-            }}
-            className="group inline-flex items-center gap-1.5 rounded-xl bg-transparent hover:bg-zinc-900/80 px-2.5 py-1 text-[13px] font-medium text-zinc-100 transition-colors select-none max-w-[280px] border-0 outline-none"
-            title={isDirectChat ? "当前工作区：直接聊天（未绑定目录，点击可切换工作区）" : `当前绑定工作区：${currentWorkspacePath}（点击可切换工作区）`}
-          >
-            {isDirectChat ? (
-              <MessageSquareIcon className="size-4 text-zinc-300 shrink-0" />
-            ) : (
-              <FolderIcon className="size-4 text-zinc-300 shrink-0" />
-            )}
-            <span className="text-zinc-400 font-normal mr-0.5 text-[12px]">工作区:</span>
-            <span className="truncate">
-              {isDirectChat ? "直接聊天" : currentWorkspaceName}
-            </span>
-            <ChevronDownIcon
-              className={cn(
-                "size-3.5 text-zinc-400 shrink-0 transition-transform duration-200 ml-0.5",
-                isWorkspaceDropdownOpen && "rotate-180 text-zinc-200",
+            <button
+              type="button"
+              data-testid="workspace-mode-selector"
+              onClick={() => {
+                setIsWorkspaceDropdownOpen((v) => !v);
+                setIsTodoExpanded(false);
+                setIsModelDropdownOpen(false);
+                setIsEffortDropdownOpen(false);
+              }}
+              className="group inline-flex items-center gap-1.5 rounded-xl bg-transparent hover:bg-zinc-200/80 dark:hover:bg-zinc-900/80 px-2.5 py-1 text-[13px] font-medium text-zinc-800 dark:text-zinc-100 transition-colors select-none max-w-[280px] border-0 outline-none"
+              title={isDirectChat ? "当前为直接聊天模式（无工作区）" : `当前工作区：${currentWorkspacePath}`}
+            >
+              {isDirectChat ? (
+                <MessageSquareIcon className="size-4 text-zinc-600 dark:text-zinc-300 shrink-0" />
+              ) : (
+                <FolderIcon className="size-4 text-zinc-600 dark:text-zinc-300 shrink-0" />
               )}
-            />
-          </button>
-
-          {/* 下拉菜单面板（大圆角、深灰底、无多余线条、移动悬浮高亮） */}
-          {isWorkspaceDropdownOpen && (
-            <div className="workspace-dropdown-panel absolute left-0 bottom-full mb-2 z-50 w-64 rounded-2xl bg-[#242427] p-1.5 shadow-2xl border-0 animate-in fade-in zoom-in-95 duration-100">
-              {/* 选项 1：直接聊天模式 */}
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectWorkspace?.(null);
-                  setIsWorkspaceDropdownOpen(false);
-                }}
+              <span className="truncate">
+                {isDirectChat ? "直接聊天" : currentWorkspaceName}
+              </span>
+              <ChevronDownIcon
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
-                  isDirectChat
-                    ? "bg-[#2f2f35] text-white font-medium"
-                    : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
+                  "size-3.5 text-zinc-500 dark:text-zinc-400 shrink-0 transition-transform duration-200 ml-0.5",
+                  isWorkspaceDropdownOpen && "rotate-180 text-zinc-800 dark:text-zinc-200",
                 )}
-              >
-                <MessageSquareIcon className="size-4 text-zinc-300 shrink-0" />
-                <span className="truncate">直接聊天</span>
-                {isDirectChat && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
-              </button>
+              />
+            </button>
 
-              {/* 选项 2..N：工作区列表（无多余分割线，干净紧凑排列） */}
-              <div className="max-h-[220px] overflow-y-auto space-y-0.5 my-0.5 scrollbar-thin scrollbar-thumb-zinc-700">
-                {customWorkspaces && customWorkspaces.length > 0
-                  ? customWorkspaces.map((wsPath) => {
-                      const isSelected =
-                        !isDirectChat &&
-                        (currentWorkspacePath === wsPath ||
-                          currentWorkspacePath.toLowerCase() === wsPath.toLowerCase());
-                      const name = extractFolderName(wsPath);
-                      return (
-                        <button
-                          key={wsPath}
-                          type="button"
-                          onClick={() => {
-                            onSelectWorkspace?.(wsPath);
-                            setIsWorkspaceDropdownOpen(false);
-                          }}
-                          className={cn(
-                            "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
-                            isSelected
-                              ? "bg-[#2f2f35] text-white font-medium"
-                              : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
-                          )}
-                        >
-                          <FolderIcon className="size-4 text-zinc-300 shrink-0" />
-                          <span className="truncate">{name}</span>
-                          {isSelected && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
-                        </button>
-                      );
-                    })
-                  : null}
+            {/* 下拉菜单面板（大圆角、深灰底、无多余线条、移动悬浮高亮） */}
+            {isWorkspaceDropdownOpen && (
+              <div className="workspace-dropdown-panel absolute left-0 bottom-full mb-2 z-50 w-64 rounded-2xl bg-[#242427] p-1.5 shadow-2xl border-0 animate-in fade-in zoom-in-95 duration-100">
+                {/* 选项 1：直接聊天模式 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectWorkspace?.(null);
+                    setIsWorkspaceDropdownOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
+                    isDirectChat
+                      ? "bg-[#2f2f35] text-white font-medium"
+                      : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
+                  )}
+                >
+                  <MessageSquareIcon className="size-4 text-zinc-300 shrink-0" />
+                  <span className="truncate">直接聊天</span>
+                  {isDirectChat && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
+                </button>
+
+                {/* 选项 2..N：工作区列表（无多余分割线，干净紧凑排列） */}
+                <div className="max-h-[220px] overflow-y-auto space-y-0.5 my-0.5 scrollbar-thin scrollbar-thumb-zinc-700">
+                  {customWorkspaces && customWorkspaces.length > 0
+                    ? customWorkspaces.map((wsPath) => {
+                        const isSelected =
+                          !isDirectChat &&
+                          (currentWorkspacePath === wsPath ||
+                            currentWorkspacePath.toLowerCase() === wsPath.toLowerCase());
+                        const name = extractFolderName(wsPath);
+                        return (
+                          <button
+                            key={wsPath}
+                            type="button"
+                            onClick={() => {
+                              onSelectWorkspace?.(wsPath);
+                              setIsWorkspaceDropdownOpen(false);
+                            }}
+                            className={cn(
+                              "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
+                              isSelected
+                                ? "bg-[#2f2f35] text-white font-medium"
+                                : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
+                            )}
+                          >
+                            <FolderIcon className="size-4 text-zinc-300 shrink-0" />
+                            <span className="truncate">{name}</span>
+                            {isSelected && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
+                          </button>
+                        );
+                      })
+                    : null}
+                </div>
+
+                {/* 选项：添加工作区...（使用加号图标，无额外分割线） */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWorkspaceDropdownOpen(false);
+                    onOpenFolderPicker?.();
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] text-zinc-200 hover:bg-[#2f2f35] hover:text-white transition-colors select-none"
+                >
+                  <PlusIcon className="size-4 text-zinc-300 shrink-0" />
+                  <span className="truncate">添加工作区...</span>
+                </button>
               </div>
+            )}
+          </div>
 
-              {/* 选项：添加工作区...（使用加号图标，无额外分割线） */}
-              <button
-                type="button"
-                onClick={() => {
+          {/* 任务 Todo 列表平行在工作区选择器右侧独立展示（展开详情为绝对定位浮层，互不影响） */}
+          {todoActivity ? (
+            <div ref={todoCardRef} className="relative flex w-fit shrink-0 items-center">
+              <TodoCard
+                activity={todoActivity}
+                isOpen={isTodoExpanded}
+                onToggleOpen={() => {
+                  setIsTodoExpanded((v) => !v);
                   setIsWorkspaceDropdownOpen(false);
-                  onOpenFolderPicker?.();
+                  setIsModelDropdownOpen(false);
+                  setIsEffortDropdownOpen(false);
                 }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] text-zinc-200 hover:bg-[#2f2f35] hover:text-white transition-colors select-none"
-              >
-                <PlusIcon className="size-4 text-zinc-300 shrink-0" />
-                <span className="truncate">添加工作区...</span>
-              </button>
+                onClose={() => setIsTodoExpanded(false)}
+              />
+            </div>
+          ) : null}
+        </div>
+
+        {/* 输入框与背面折叠排队卡片堆叠容器 */}
+        <div className="relative">
+          {/* 排队条目卡片：显示在输入框背面，像从背面探出的折叠卡片 */}
+          {queuedPrompts.length > 0 && (
+            <div className="relative z-0 -mb-3.5 w-full space-y-[-10px] animate-in fade-in slide-in-from-bottom-2 duration-150">
+              {queuedPrompts.map((item, index) => (
+                <div
+                  key={item.id}
+                  data-testid="chat-queued-prompt-item"
+                  className={cn(
+                    "group flex items-center justify-between gap-3 px-4 pt-2 pb-5 rounded-t-2xl select-none transition-all",
+                    "border-t border-x",
+                    "bg-zinc-100/95 border-zinc-300/90 text-zinc-800 shadow-xs",
+                    "dark:bg-[#202024] dark:border-zinc-700/80 dark:text-zinc-200 dark:shadow-md"
+                  )}
+                  style={{ zIndex: index }}
+                >
+                  {/* 左侧：气泡图标与消息文本内容 */}
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <MessageSquareIcon className="size-3.5 shrink-0 text-zinc-500 dark:text-zinc-400" />
+                    <span className="truncate text-[12.5px] font-normal text-zinc-800 dark:text-zinc-200 select-text">
+                      {item.text || (item.attachments.length > 0 ? `[附件: ${item.attachments.map((f) => f.name).join(", ")}]` : "排队任务")}
+                    </span>
+                  </div>
+
+                  {/* 右侧：三个紧凑操作按钮（编辑取回、删除、立即发送引导） */}
+                  <div className="flex items-center gap-1 shrink-0 text-zinc-500 dark:text-zinc-400">
+                    <button
+                      type="button"
+                      data-testid="chat-queue-edit-btn"
+                      onClick={() => handleEditQueued(item.id)}
+                      title="编辑此提示词并取回输入框"
+                      className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                    >
+                      <SquarePenIcon className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="chat-queue-delete-btn"
+                      onClick={() => handleDeleteQueued(item.id)}
+                      title="删除排队消息"
+                      className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-red-500 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-red-400 transition-colors cursor-pointer"
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="chat-queue-execute-btn"
+                      onClick={() => handleExecuteQueued(item.id)}
+                      title="立即发送并执行此排队项"
+                      className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                    >
+                      <ArrowUpIcon className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
+
+          {/* 前面的输入框卡片：具有实色不透明背景和微阴影，覆盖在排队卡片下半截之上 */}
+          <div className="relative z-10">
+            <PromptInputProvider>
+              <PromptInputComposer
+                text={text}
+                setText={setText}
+                hasText={hasText}
+                isRunning={isRunning}
+                disabled={disabled}
+                queuedPrompts={queuedPrompts}
+                onEnqueue={handleEnqueue}
+                onSteer={handleSteer}
+                onExecuteQueued={handleExecuteQueued}
+                onSubmit={handleSubmit}
+                onAttachmentError={handleAttachmentError}
+                setPreviewAttachment={setPreviewAttachment}
+                permissionMode={permissionMode}
+                isPermissionDropdownOpen={isPermissionDropdownOpen}
+                setIsPermissionDropdownOpen={setIsPermissionDropdownOpen}
+                selectPermissionMode={selectPermissionMode}
+                permissionDropdownRef={permissionDropdownRef}
+                currentModel={currentModel}
+                modelStatus={modelStatus}
+                isModelDropdownOpen={isModelDropdownOpen}
+                setIsModelDropdownOpen={setIsModelDropdownOpen}
+                availableModels={availableModels}
+                onSelectModel={onSelectModel}
+                onOpenSettings={onOpenSettings}
+                modelDropdownRef={modelDropdownRef}
+                messages={messages}
+                activities={activities}
+                usage={usage}
+                reasoningUnsupported={reasoningUnsupported}
+                effortDropdownRef={effortDropdownRef}
+                isEffortDropdownOpen={isEffortDropdownOpen}
+                setIsEffortDropdownOpen={setIsEffortDropdownOpen}
+                effortLabel={effortLabel}
+                fallbackApplied={fallbackApplied}
+                requestedEffort={requestedEffort}
+                effort={effort}
+                supportedEfforts={supportedEfforts}
+                onEffortChange={onEffortChange}
+                onStop={onStop}
+              />
+              {attachmentError && (
+                <p role="alert" className="px-3 pt-2 text-xs text-red-300">
+                  {attachmentError}
+                </p>
+              )}
+            </PromptInputProvider>
           </div>
         </div>
 
-        {todoActivity ? (
-          <div ref={todoCardRef} className="mb-2 min-w-0">
-            <TodoCard activity={todoActivity} />
-          </div>
-        ) : null}
-
-        {/* DeepSeek Harness 主页面底栏统计条 (StatsLine) */}
-        <StatsLine
-          messages={messages}
-          activities={activities}
-          providedUsage={usage}
-        />
-
-        <PromptInputProvider>
-          {/* 纯暗黑极简边框：无任何刺眼白色外框，深邃内敛 */}
-          <PromptInput
-            onSubmit={handleSubmit}
-            accept={ACCEPTED_ATTACHMENT_TYPES}
-            multiple
-            globalDrop
-            maxFiles={MAX_ATTACHMENT_COUNT}
-            maxFileSize={MAX_ATTACHMENT_SIZE}
-            onError={handleAttachmentError}
-            className="rounded-2xl border border-zinc-800/80 bg-zinc-950/70 shadow-none focus-within:border-zinc-600 focus-within:ring-0 transition-colors overflow-visible outline-none"
-          >
-            <PromptInputHeader className="px-3 pt-3">
-              <PromptInputAttachmentsDisplay onPreview={setPreviewAttachment} />
-            </PromptInputHeader>
-            <PromptInputBody>
-              <PromptInputTextarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="输入任务描述...（Enter 发送，Shift+Enter 换行）"
-                className="min-h-[50px] max-h-[220px] px-3.5 py-2.5 text-[13.5px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none border-0 shadow-none focus-visible:ring-0"
-              />
-            </PromptInputBody>
-
-            {/* 底部工具条与提交按钮 */}
-            <PromptInputFooter className="flex items-center justify-between px-3 pb-2.5 pt-1.5 border-t border-zinc-800/40 overflow-visible">
-              <PromptInputTools className="flex items-center gap-2.5 text-[12px]">
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuTrigger
-                    aria-label="添加图片或文件"
-                    title="添加图片或文件"
-                    className="size-8 rounded-lg text-zinc-300 hover:bg-zinc-800/70"
-                  />
-                  <PromptInputActionMenuContent className="border-zinc-700 bg-zinc-900 text-zinc-100">
-                    <PromptInputActionAddAttachments label="添加图片或文件" />
-                  </PromptInputActionMenuContent>
-                </PromptInputActionMenu>
-                {/* 运行权限选择：只影响后续发起的运行。 */}
-                <div className="relative" ref={permissionDropdownRef}>
-                  <button
-                    type="button"
-                    data-testid="permission-mode-selector"
-                    aria-label={`权限模式：${PERMISSION_OPTIONS.find((option) => option.mode === permissionMode)?.label ?? "请求批准"}`}
-                    onClick={() => {
-                      setIsPermissionDropdownOpen((open) => !open);
-                      setIsModelDropdownOpen(false);
-                      setIsEffortDropdownOpen(false);
-                    }}
-                    className={cn(
-                      "composer-selector flex items-center gap-1.5 rounded-md px-2 py-1 text-zinc-300 transition-colors",
-                      permissionMode === "full"
-                        ? "border border-amber-500/70 bg-amber-500/15 text-amber-300 font-medium shadow-[0_0_8px_rgba(245,158,11,0.2)] hover:bg-amber-500/20"
-                        : "bg-transparent hover:bg-zinc-800/70 hover:text-white",
-                    )}
-                    title={
-                      permissionMode === "full"
-                        ? "⚠️ 危险模式：已开启完全访问权限（Agent免审批直接执行Shell命令与修改文件）"
-                        : "选择本次及后续运行的工具审批方式"
-                    }
-                  >
-                    {(() => {
-                      const option = PERMISSION_OPTIONS.find((item) => item.mode === permissionMode) ?? PERMISSION_OPTIONS[0]!;
-                      return <option.Icon className={cn("size-3.5 shrink-0", permissionMode === "full" ? "text-amber-400" : "text-zinc-400")} />;
-                    })()}
-                    <span className={cn("text-[11.5px] font-medium", permissionMode === "full" && "text-amber-300")}>
-                      {PERMISSION_OPTIONS.find((option) => option.mode === permissionMode)?.label ?? "请求批准"}
-                    </span>
-                    <ChevronDownIcon className={cn("size-3 text-zinc-500 transition-transform", isPermissionDropdownOpen && "rotate-180")} />
-                  </button>
-
-                  {isPermissionDropdownOpen && (
-                    <div className="workspace-dropdown-panel composer-menu absolute bottom-full left-0 z-50 mb-2 w-[min(21rem,calc(100vw-2rem))] rounded-xl border border-zinc-700/70 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-                      {PERMISSION_OPTIONS.map(({ mode, label, description, Icon }) => {
-                        const isSelected = permissionMode === mode;
-                        return (
-                          <button
-                            key={mode}
-                            type="button"
-                            data-testid={`permission-mode-${mode}`}
-                            aria-pressed={isSelected}
-                            onClick={() => {
-                              selectPermissionMode(mode);
-                            }}
-                            className={cn(
-                              "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors",
-                              isSelected ? "bg-[#2f2f35]" : "hover:bg-[#2f2f35]",
-                            )}
-                          >
-                            <Icon className={cn("size-5 shrink-0", mode === "full" ? "text-orange-400" : "text-zinc-300")} />
-                            <span className="min-w-0 flex-1">
-                              <span className={cn("block text-[13px] font-medium", mode === "full" && "text-orange-400")}>
-                                {label}
-                              </span>
-                              <span className="block text-[11.5px] leading-snug text-zinc-400">
-                                {description}
-                              </span>
-                            </span>
-                            {isSelected && <CheckIcon className={cn("size-4 shrink-0", mode === "full" ? "text-orange-400" : "text-zinc-200")} />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* 1. 模型选择下拉菜单 */}
-                <div className="relative" ref={modelDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsModelDropdownOpen((v) => !v);
-                      setIsEffortDropdownOpen(false);
-                      setIsPermissionDropdownOpen(false);
-                    }}
-                    className="composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2.5 py-1 text-zinc-300 transition-colors hover:bg-zinc-800/70 hover:text-white"
-                    title="点击下拉切换当前模型"
-                  >
-                    <span className="size-1.5 rounded-full bg-emerald-400 shrink-0" />
-                    <span className="font-mono truncate max-w-[170px] text-[11.5px]">
-                      {currentModel || modelStatus}
-                    </span>
-                    <ChevronDownIcon className={cn("size-3 text-zinc-500 shrink-0 ml-0.5 transition-transform", isModelDropdownOpen && "rotate-180")} />
-                  </button>
-
-                  {/* 弹出式模型下拉列表 */}
-                  {isModelDropdownOpen && (
-                    <div className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-64 rounded-xl border border-zinc-800 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-                      <div className="px-2 py-1 text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                        <span>选择模型</span>
-                        {availableModels.length > 0 && <span>({availableModels.length})</span>}
-                      </div>
-
-                      <div className="max-h-48 overflow-y-auto space-y-0.5 my-1">
-                        {availableModels.length === 0 ? (
-                          <div className="px-2 py-2 text-[11.5px] text-zinc-500 text-center">
-                            暂无可用模型，请在设置中配置
-                          </div>
-                        ) : (
-                          availableModels.map((m) => {
-                            const isSelected = currentModel === m;
-                            return (
-                              <button
-                                key={m}
-                                type="button"
-                                onClick={() => {
-                                  onSelectModel?.(m);
-                                  setIsModelDropdownOpen(false);
-                                }}
-                                className={`flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[12px] font-mono text-left transition-colors ${
-                                  isSelected
-                                    ? "bg-[#2f2f35] text-white font-medium"
-                                    : "text-zinc-400 hover:bg-[#2f2f35] hover:text-zinc-200"
-                                }`}
-                              >
-                                <span className="truncate">{m}</span>
-                                {isSelected && <CheckIcon className="size-3 text-emerald-400 shrink-0" />}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-
-                      {onOpenSettings && (
-                        <div className="pt-1 border-t border-zinc-800/80">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsModelDropdownOpen(false);
-                              onOpenSettings();
-                            }}
-                            className="flex w-full items-center gap-1.5 px-2 py-1 text-[11.5px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 rounded transition-colors"
-                          >
-                            <SettingsIcon className="size-3 text-zinc-500" />
-                            <span>管理模型与提供商...</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* 1.5 DeepSeek Harness 原生 ContextMeter：环形占用率仪表圈与上下文构成/用量面板 */}
-                <ContextMeter
-                  messages={messages}
-                  activities={activities}
-                  providedUsage={usage}
-                />
-
-                {/* 2. 思考等级下拉选择样式 */}
-                <div className="relative" ref={effortDropdownRef}>
-                  <button
-                    type="button"
-                    disabled={reasoningUnsupported}
-                    onClick={() => {
-                      setIsEffortDropdownOpen((v) => !v);
-                      setIsModelDropdownOpen(false);
-                      setIsPermissionDropdownOpen(false);
-                    }}
-                    className={cn(
-                      "composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 transition-colors hover:bg-zinc-800/70",
-                      reasoningUnsupported ? "opacity-40 cursor-not-allowed text-zinc-600" : "text-zinc-300 hover:text-white"
-                    )}
-                    title={
-                      reasoningUnsupported
-                        ? "当前模型不支持调节思考等级"
-                        : fallbackApplied
-                          ? `已自动降级：当前模型不支持「${requestedEffort === "high" ? "高" : requestedEffort === "medium" ? "中" : "低"}」档位，实际使用「${effortLabel}」`
-                          : "点击切换思考等级"
-                    }
-                  >
-                    <BrainIcon className="size-3 text-zinc-400 shrink-0" />
-                    <span className="text-[11.5px] font-medium">
-                      思考: {reasoningUnsupported ? "无" : effortLabel}
-                    </span>
-                    {fallbackApplied && (
-                      <span
-                        className="size-1.5 rounded-full bg-amber-400 shrink-0"
-                        aria-label="推理强度已降级"
-                      />
-                    )}
-                    <ChevronDownIcon className={cn("size-3 text-zinc-500 shrink-0 ml-0.5 transition-transform", isEffortDropdownOpen && "rotate-180")} />
-                  </button>
-
-                  {/* 弹出式思考等级下拉列表 */}
-                  {isEffortDropdownOpen && (
-                    <div className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-44 rounded-xl border border-zinc-800 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-                      <div className="px-2 py-1 text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-                        思考等级 / 推理强度
-                      </div>
-
-                      {fallbackApplied && (
-                        <div className="mx-1 mb-1 rounded-md bg-amber-400/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-300/90">
-                          已自动降级：当前模型不支持
-                          「{requestedEffort === "high" ? "高" : requestedEffort === "medium" ? "中" : "低"}」
-                          档位，本次运行实际使用「{effortLabel}」。
-                        </div>
-                      )}
-
-                      <div className="space-y-0.5 my-1">
-                        {REASONING_EFFORTS.map((option) => {
-                          const supported = supportedEfforts.includes(option);
-                          const isSelected = effort === option;
-                          const title = option === "high" ? "高 (high)" : option === "medium" ? "中 (medium)" : "低 (low)";
-                          const desc = option === "high" ? "深度多步思考" : option === "medium" ? "均衡推理与速度" : "快速响应思考";
-
-                          if (!supported) {
-                            return (
-                              <div
-                                key={option}
-                                className="flex items-center justify-between px-2 py-1.5 rounded-md text-[11.5px] text-zinc-600 cursor-not-allowed select-none"
-                                title="当前模型不支持此档位（如 step-3.5-flash-2603 仅限低与高）"
-                              >
-                                <span>{title}</span>
-                                <span className="text-[10px] text-zinc-600">不支持</span>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <button
-                              key={option}
-                              type="button"
-                              onClick={() => {
-                                onEffortChange(option);
-                                setIsEffortDropdownOpen(false);
-                              }}
-                              className={`flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[12px] text-left transition-colors ${
-                                isSelected
-                                  ? "bg-[#2f2f35] text-white font-medium"
-                                  : "text-zinc-400 hover:bg-[#2f2f35] hover:text-zinc-200"
-                              }`}
-                            >
-                              <div className="flex flex-col">
-                                <span>{title}</span>
-                                <span className="text-[10.5px] text-zinc-500 font-normal">{desc}</span>
-                              </div>
-                              {isSelected && <CheckIcon className="size-3 text-emerald-400 shrink-0 ml-1" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </PromptInputTools>
-
-              {/* 右侧：官网标准的 PromptInputSubmit 提交/停止按钮 */}
-              <PromptInputSubmitWithAttachments
-                hasText={hasText}
-                isRunning={isRunning}
-                onStop={onStop}
-              />
-            </PromptInputFooter>
-          </PromptInput>
-          {attachmentError && (
-            <p role="alert" className="px-3 pt-2 text-xs text-red-300">
-              {attachmentError}
-            </p>
-          )}
-        </PromptInputProvider>
+        {/* Token 与耗时统计条：移至输入框最下方展示（严格对齐 Microsoft agent 样式与参数） */}
+        <div className="mt-2 px-1">
+          <StatsLine
+            messages={messages}
+            activities={activities}
+            providedUsage={usage}
+          />
+        </div>
       </div>
 
       <ImagePreviewDialog

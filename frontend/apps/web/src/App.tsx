@@ -344,8 +344,12 @@ export function App() {
     (targetWorkspace?: string | null) => {
       const ws = targetWorkspace !== undefined ? targetWorkspace : workspaceRoot;
       setWorkspaceRoot(ws ?? null);
-      // 如果当前已经是空会话，直接复用当前对话，不重复向列表追加多余的「新对话」
+      if (ws && ws.trim().length > 0) {
+        addWorkspace(ws.trim());
+      }
+      // 如果当前已经是空会话，直接复用当前对话并同步工作区归属，不重复向列表追加多余的「新对话」
       if (state.messages.length === 0 && state.activities.length === 0) {
+        sessionsManager.createSession(state.threadId, ws ?? "");
         sessionsManager.setActiveSessionId(state.threadId);
         return;
       }
@@ -358,7 +362,7 @@ export function App() {
       newThread(newSessionId);
       sessionsManager.createSession(newSessionId, ws ?? "");
     },
-    [workspaceRoot, state, sessionsManager, saveSessionState, newThread],
+    [workspaceRoot, state, sessionsManager, saveSessionState, newThread, addWorkspace],
   );
 
   // 文件夹选择器完成选择
@@ -519,7 +523,7 @@ export function App() {
   const currentTitle = currentSession?.title || "新对话";
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-black text-zinc-100 antialiased">
+    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 antialiased">
       {/* 左侧边栏（完全参考用户截图设计） */}
       <WorkspaceSidebar
         isOpen={isSidebarOpen}
@@ -553,9 +557,9 @@ export function App() {
       />
 
       {/* 右侧主聊天区 */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-black">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-black">
         {/* 顶部 Header：极致极简，去掉右上角设置等杂项 */}
-        <header className="flex h-12 shrink-0 items-center justify-between px-4 border-b border-zinc-800/40 bg-black">
+        <header className="flex h-12 shrink-0 items-center justify-between px-4 border-b border-zinc-200/80 dark:border-zinc-800/40 bg-white dark:bg-black">
           <div className="flex items-center gap-2.5 min-w-0">
             {!isSidebarOpen && (
               <button
@@ -620,7 +624,7 @@ export function App() {
         </header>
 
         {/* 聊天消息区 */}
-        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-black">
+        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-black">
           <ChatMessages
             messages={state.messages}
             activities={state.activities}

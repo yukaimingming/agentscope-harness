@@ -428,6 +428,21 @@ export function WorkspaceSidebar({
               className="sidebar-add-workspace-button rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
               title="添加工作区"><FolderPlusIcon className="size-3.5" /></button>
           </div>
+
+          {/* 当暂无绑定的工作区文件夹时，呈现醒目的添加/新建入口引导 */}
+          {orderedGroups.filter((g) => Boolean(g.folderPath)).length === 0 && (
+            <div className="px-1 py-1">
+              <button
+                type="button"
+                onClick={() => (onOpenFolderPicker ? onOpenFolderPicker() : setIsFolderPickerOpen(true))}
+                className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg border border-dashed border-zinc-800/80 bg-zinc-950/40 text-[12px] text-zinc-400 hover:text-zinc-200 hover:border-zinc-700 hover:bg-zinc-900 transition-colors"
+                title="选择或新建一个本地工作区文件夹"
+              >
+                <FolderPlusIcon className="size-3.5 text-amber-400 shrink-0" />
+                <span>新建或添加工作区...</span>
+              </button>
+            </div>
+          )}
           {orderedGroups.map((group) => {
             const isCollapsed = !!collapsedFolders[group.folderPath];
             const isCurrentSelectedFolder = selected === group.folderPath;

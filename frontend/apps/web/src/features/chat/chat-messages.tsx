@@ -204,6 +204,16 @@ export function buildTurnProcessTimeline(
       if (Boolean(item.reasoning) && msgIdx < turnMessages.length - 1) {
         return true;
       }
+      // 【关键修复】：当大模型流式输出中间过渡文本（如“我来为你加载/查询某文件”），
+      // 若该消息伴随思考且文本属于引导短句（字数 < 120 字且以意图动词开头，或在活跃运行中），
+      // 必须留在思考链时间线内部流式展示，严禁跳到外部正文气泡中闪现再缩回！
+      if (
+        item.streaming &&
+        Boolean(item.reasoning) &&
+        (item.content.trim().length < 120 && /^(我来|我将|让我|正在|先|为了|接下来|准备|调用|使用|执行|通过)/.test(item.content.trim()))
+      ) {
+        return true;
+      }
       return false;
     };
 
@@ -329,12 +339,19 @@ export function ChatMessages({
   decisions,
   onQuickPrompt,
 }: ChatMessagesProps) {
-  // 人工审批活动
-  const approvals = activities.filter((activity) => activity.kind === "approval");
-  // 工具调用卡片
-  const _toolActivities = useMemo(() => {
-    return activities.filter((activity) => activity.kind === "tool");
-  }, [activities]);
+  // 人工审批活动：仅在当前明确处于等待审批态且该中断尚未决断时展示，用户操作后立即隐藏，严禁残留无用卡片
+  const isWaitingApproval = runSnapshot?.status === "waiting_approval";
+  const pendingInterruptIds = useMemo(() => {
+    return new Set(runSnapshot?.interrupts?.map((item) => item.id) ?? []);
+  }, [runSnapshot?.interrupts]);
+  const approvals = useMemo(() => {
+    if (!isWaitingApproval) return [];
+    return activities.filter((activity) => {
+      if (activity.kind !== "approval") return false;
+      const interruptId = activity.id.replace("approval:", "");
+      return pendingInterruptIds.has(interruptId) && !decisionFor(decisions, activity);
+    });
+  }, [activities, isWaitingApproval, pendingInterruptIds, decisions]);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<ChatAttachment | null>(null);
@@ -406,7 +423,7 @@ export function ChatMessages({
   };
 
   return (
-    <Conversation className="min-h-0 flex-1 bg-black">
+    <Conversation className="min-h-0 flex-1 bg-white dark:bg-black">
       <ConversationContent className="mx-auto w-full max-w-3xl px-0 py-8">
         {messages.length === 0 ? (
           /* 空状态引导区 */
