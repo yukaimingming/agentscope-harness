@@ -1,19 +1,17 @@
 "use client";
 
 /**
- * 官方 AI SDK Elements Shimmer 组件实现。
- * 参考：https://elements.ai-sdk.dev/components/shimmer
+ * 官方 shadcn/ui 与 AI SDK Elements Shimmer 文字特效实现。
+ * 参考：https://ui.shadcn.com/docs/utils/shimmer
  *
  * 核心特性：
- * 1. 使用 motion/react 的 motion.create 创建可多态渲染的微光组件；
- * 2. 默认使用 span，彻底解决嵌入在 button/CollapsibleTrigger 时的 HTML 嵌套冲突；
- * 3. 亮白高光从右向左匀速扫过暗灰文字表面，呈现流畅细腻的加载/思考动效。
+ * 1. 采用 shadcn 官方提供的 CSS shimmer 规范与 @keyframes tw-shimmer；
+ * 2. 默认采用 blue-500/60 高光色（可按需通过 className 覆盖）；
+ * 3. 彻底消除复杂 runtime 开销与嵌套 hydration/DOM 警告。
  */
 
 import { cn } from "@/lib/utils";
-import { motion, type MotionStyle } from "motion/react";
-import type { ComponentProps, ElementType, ReactNode } from "react";
-import { useMemo } from "react";
+import type { ComponentProps, ElementType } from "react";
 
 export type ShimmerProps<T extends ElementType = "span"> = {
   as?: T;
@@ -27,50 +25,18 @@ export const Shimmer = <T extends ElementType = "span">({
   as,
   children,
   className,
-  duration = 2,
-  spread = 2,
-  style,
+  duration,
+  spread,
   ...props
 }: ShimmerProps<T>) => {
-  const Component = (as || "span") as any;
-  const MotionComponent = useMemo(() => motion.create(Component), [Component]);
-
-  const dynamicSpread = useMemo(() => {
-    return (children?.length ?? 0) * spread;
-  }, [children, spread]);
-
-  const combinedStyle: MotionStyle = {
-    ...style,
-    // @ts-expect-error motion supports custom CSS properties in style
-    "--spread": `${dynamicSpread}px`,
-    backgroundImage:
-      "var(--bg), linear-gradient(var(--color-muted-foreground,#71717a), var(--color-muted-foreground,#71717a))",
-  };
+  const Component = as || "span";
 
   return (
-    <MotionComponent
-      animate={{
-        backgroundPosition: ["100% center", "0% center"],
-      }}
-      className={cn(
-        "relative inline-block bg-[length:250%_100%,auto] bg-clip-text text-transparent",
-        "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-foreground,#ffffff),#0000_calc(50%+var(--spread)))]",
-        "[background-repeat:no-repeat,padding-box]",
-        className
-      )}
-      initial={{
-        backgroundPosition: "100% center",
-      }}
-      style={combinedStyle}
-      transition={{
-        duration,
-        ease: "linear",
-        repeat: Number.POSITIVE_INFINITY,
-      }}
+    <Component
+      className={cn("shimmer shimmer-color-blue-500/60 inline-block", className)}
       {...(props as any)}
     >
       {children}
-    </MotionComponent>
+    </Component>
   );
 };
-
