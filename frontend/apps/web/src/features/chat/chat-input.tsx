@@ -286,7 +286,7 @@ function PromptInputComposer({
       maxFiles={MAX_ATTACHMENT_COUNT}
       maxFileSize={MAX_ATTACHMENT_SIZE}
       onError={onAttachmentError}
-      className="chat-prompt-input rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800/80 dark:bg-[#18181b] shadow-xs dark:shadow-md focus-within:border-zinc-400 dark:focus-within:border-zinc-600 focus-within:ring-0 transition-colors overflow-hidden relative outline-none"
+      className="chat-prompt-input rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800/80 dark:bg-[#18181b] shadow-xs dark:shadow-md focus-within:border-zinc-400 dark:focus-within:border-zinc-600 focus-within:ring-0 transition-colors overflow-visible relative outline-none"
     >
       <PromptInputHeader className="px-3 pt-3">
         <PromptInputAttachmentsDisplay onPreview={(f) => setPreviewAttachment(f)} />
@@ -302,8 +302,8 @@ function PromptInputComposer({
       </PromptInputBody>
 
       {/* 底部工具条与提交按钮 */}
-      <PromptInputFooter className="flex items-center justify-between px-3 pb-2.5 pt-1.5 border-0 border-none overflow-hidden relative">
-        <PromptInputTools className="flex-1 min-w-0 flex items-center gap-1.5 text-[12px] flex-nowrap overflow-hidden">
+      <PromptInputFooter className="flex items-center justify-between px-3 pb-2.5 pt-1.5 border-0 border-none overflow-visible relative">
+        <PromptInputTools className="flex-1 min-w-0 flex items-center gap-1.5 text-[12px] flex-nowrap overflow-visible">
           <PromptInputActionMenu>
             <PromptInputActionMenuTrigger
               aria-label="添加图片或文件"
@@ -409,7 +409,7 @@ function PromptInputComposer({
 
             {/* 弹出式模型下拉列表 */}
             {isModelDropdownOpen && (
-              <div className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-64 rounded-xl border border-zinc-800 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+              <div className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-64 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#242427] text-zinc-900 dark:text-zinc-100 p-1.5 shadow-xl dark:shadow-2xl animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-2 py-1 text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center justify-between">
                   <span>选择模型</span>
                   {availableModels.length > 0 && <span>({availableModels.length})</span>}
@@ -433,12 +433,12 @@ function PromptInputComposer({
                           }}
                           className={`flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[12px] font-mono text-left transition-colors ${
                             isSelected
-                              ? "bg-[#2f2f35] text-white font-medium"
-                              : "text-zinc-400 hover:bg-[#2f2f35] hover:text-zinc-200"
+                              ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
+                              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200"
                           }`}
                         >
                           <span className="truncate">{m}</span>
-                          {isSelected && <CheckIcon className="size-3 text-emerald-400 shrink-0" />}
+                          {isSelected && <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0" />}
                         </button>
                       );
                     })
@@ -446,14 +446,14 @@ function PromptInputComposer({
                 </div>
 
                 {onOpenSettings && (
-                  <div className="pt-1 border-t border-zinc-800/80">
+                  <div className="pt-1 border-t border-zinc-200/80 dark:border-zinc-800/80">
                     <button
                       type="button"
                       onClick={() => {
                         setIsModelDropdownOpen(false);
                         onOpenSettings();
                       }}
-                      className="flex w-full items-center gap-1.5 px-2 py-1 text-[11.5px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 rounded transition-colors"
+                      className="flex w-full items-center gap-1.5 px-2 py-1 text-[11.5px] text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-900 rounded transition-colors"
                     >
                       <SettingsIcon className="size-3 text-zinc-500" />
                       <span>管理模型与提供商...</span>
