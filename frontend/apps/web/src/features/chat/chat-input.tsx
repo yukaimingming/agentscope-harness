@@ -82,6 +82,8 @@ interface ChatInputProps {
   modelStatus: string;
   modelStatusKind: "ok" | "warn" | "error";
   disabled?: boolean;
+  /** 当处于禁用/未配置状态被用户触发发送时的拦截回调 */
+  onBlockedSend?: (reason: string) => void;
   /** 可供下拉切换的模型列表 */
   availableModels?: string[];
   /** 当前选中的模型 ID */
@@ -632,6 +634,7 @@ export function ChatInput({
   requestedEffort,
   modelStatus,
   disabled = false,
+  onBlockedSend,
   availableModels = [],
   currentModel,
   onSelectModel,
@@ -787,7 +790,14 @@ export function ChatInput({
       }
       return;
     }
-    if ((content.length > 0 || attachments.length > 0) && !disabled) {
+    // 未配置 API 厂商或未填 Key 时进行主动拦截提示，绝不静默无反应
+    if (disabled) {
+      if (content.length > 0 || attachments.length > 0) {
+        onBlockedSend?.(modelStatus || "未配置大模型 API 厂商或未填写 API Key");
+      }
+      return;
+    }
+    if (content.length > 0 || attachments.length > 0) {
       const totalBytes = attachments.reduce((total, file) => {
         const payload = file.url.match(/^data:[^;,]+;base64,([\s\S]+)$/)?.[1] ?? "";
         return total + Math.floor((payload.length * 3) / 4);

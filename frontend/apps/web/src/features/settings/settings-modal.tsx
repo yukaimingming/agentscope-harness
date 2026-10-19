@@ -50,7 +50,7 @@ interface SettingsModalProps {
   onClose: () => void;
   providers: PublicProvider[];
   loading: boolean;
-  onSave: (draft: ProviderDraft) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (draft: ProviderDraft) => Promise<{ ok: boolean; error?: string; provider?: PublicProvider }>;
   onRemove: (id: string) => Promise<boolean>;
   onFetchModels: (id: string) => Promise<ModelListOutcome>;
   onTest: (id: string, modelId?: string) => Promise<TestOutcome>;
@@ -178,11 +178,22 @@ function SettingsForm(props: Omit<SettingsModalProps, "open" | "onClose" | "load
     setSaving(false);
     if (result.ok) {
       setNotice(isEditing ? "配置已成功更新" : "新厂商配置已成功保存");
-      setDraft({ ...draft, apiKey: "" });
-      // Key/配置变更后自动刷新一次模型列表（AGENTS.md 9.2：填写 Base URL
-      // 和 Key 后在可安全获取时自动刷新）。失败不阻断保存流程。
-      if (draft.id) {
-        void handleFetchModels();
+      const targetId = result.provider?.id ?? draft.id;
+      if (result.provider) {
+        setDraft(draftFromProvider(result.provider));
+        props.onSelectProvider(result.provider.id);
+      } else {
+        setDraft({ ...draft, apiKey: "" });
+      }
+      // Key/配置变更后安全尝试刷新模型列表，失败仅警告，不破坏保存成功的正常提示
+      if (targetId) {
+        props.onFetchModels(targetId).then((modelRes) => {
+          if (!modelRes.ok) {
+            console.warn("自动刷新模型列表未成功:", modelRes.message);
+          }
+        }).catch((err) => {
+          console.warn("自动刷新模型列表异常:", err);
+        });
       }
     } else {
       setError(result.error ?? "保存失败");

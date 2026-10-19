@@ -31,7 +31,7 @@ import { useProviderSettings } from "./features/settings/use-provider-settings.j
 import { useTheme } from "./features/settings/use-theme.js";
 import { useSessions, normalizePath, type SessionSummary } from "./features/chat/use-sessions.js";
 import { FolderPickerModal } from "./features/chat/folder-picker-modal.js";
-import { PanelLeftIcon, AlertCircleIcon, PanelRightIcon, SunIcon, MoonIcon } from "lucide-react";
+import { PanelLeftIcon, AlertCircleIcon, PanelRightIcon, SunIcon, MoonIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { ReviewSidebar } from "./features/review/review-sidebar.js";
 
 /** AG-UI 服务端地址：走代理或直接连接。 */
@@ -325,9 +325,30 @@ export function App() {
 
   const modelStatusKind: "ok" | "warn" | "error" = canSend ? "ok" : "error";
 
+  // 未配置厂商拦截警告状态
+  const [providerWarning, setProviderWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (canSend && providerWarning) {
+      setProviderWarning(null);
+    }
+  }, [canSend, providerWarning]);
+
   // 发送消息
   const handleSend = useCallback(
     (content: string, attachments: ChatAttachment[] = []): void => {
+      if (!canSend) {
+        const warningReason = !settings.activeProvider
+          ? "当前尚未配置任何大模型 API 提供商，无法发送消息并调用模型。请先前往「设置」配置 API 厂商与密钥。"
+          : !settings.activeProvider.hasApiKey
+            ? "当前大模型厂商尚未填写 API Key，无法与模型建立连接。请先前往「设置」补充 API Key。"
+            : currentModelId === null
+              ? "当前大模型厂商未选择可用模型，请先前往「设置」刷新并选择模型。"
+              : "当前模型配置未就绪，无法发送消息。";
+        setProviderWarning(warningReason);
+        return;
+      }
+      setProviderWarning(null);
       void send(content, {
         providerId: settings.activeProviderId ?? undefined,
         modelId: currentModelId ?? undefined,
@@ -336,7 +357,7 @@ export function App() {
         permissionMode,
       }, attachments);
     },
-    [send, settings.activeProviderId, currentModelId, effortResolution.effort, workspaceRoot, permissionMode],
+    [canSend, send, settings.activeProvider, settings.activeProviderId, currentModelId, effortResolution.effort, workspaceRoot, permissionMode],
   );
 
   // 新建会话
@@ -689,6 +710,48 @@ export function App() {
             </div>
           ) : null}
 
+          {/* 未配置厂商或未填 Key 拦截警告提示 */}
+          {providerWarning && (
+            <div className="mx-auto w-full max-w-3xl px-4 pb-2 transition-all animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3.5 text-amber-200 shadow-xl backdrop-blur-md">
+                <div className="flex items-start gap-2.5">
+                  <TriangleAlertIcon className="size-5 shrink-0 text-amber-400 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="text-[13px] font-semibold text-amber-300 flex items-center gap-1.5">
+                      <span>发送拦截警告</span>
+                      <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        未配置可用 API 厂商
+                      </span>
+                    </div>
+                    <div className="text-[12.5px] text-amber-200/90 leading-relaxed">
+                      {providerWarning}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsOpen(true);
+                      setProviderWarning(null);
+                    }}
+                    className="rounded-lg bg-amber-500 hover:bg-amber-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors shadow-sm cursor-pointer"
+                  >
+                    前往配置厂商
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProviderWarning(null)}
+                    className="rounded-lg p-1.5 text-amber-400/80 hover:text-amber-200 hover:bg-amber-500/20 transition-colors cursor-pointer"
+                    title="关闭提醒"
+                  >
+                    <XIcon className="size-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 底部输入框（支持输入框上方对齐的工作区下拉选择、模型下拉选择与思考等级） */}
           <ChatInput
             todoActivity={latestTodoActivity}
@@ -704,6 +767,16 @@ export function App() {
             modelStatus={modelStatus}
             modelStatusKind={modelStatusKind}
             disabled={!canSend}
+            onBlockedSend={(reason) => {
+              const warningReason = !settings.activeProvider
+                ? "当前尚未配置任何大模型 API 提供商，无法发送消息并调用模型。请先前往「设置」配置 API 厂商与密钥。"
+                : !settings.activeProvider.hasApiKey
+                  ? "当前大模型厂商尚未填写 API Key，无法与模型建立连接。请先前往「设置」补充 API Key。"
+                  : currentModelId === null
+                    ? "当前大模型厂商未选择可用模型，请先前往「设置」刷新并选择模型。"
+                    : (reason || "当前未配置可用 API 厂商，无法发送消息。");
+              setProviderWarning(warningReason);
+            }}
             availableModels={allAvailableModels}
             currentModel={currentModelId}
             onSelectModel={(model: string) => settings.setActiveModelId(model)}

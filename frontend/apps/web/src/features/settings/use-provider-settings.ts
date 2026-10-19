@@ -123,7 +123,7 @@ export function useProviderSettings() {
   }, []);
 
   const save = useCallback(
-    async (draft: ProviderDraft): Promise<{ ok: boolean; error?: string }> => {
+    async (draft: ProviderDraft): Promise<{ ok: boolean; error?: string; provider?: PublicProvider }> => {
       // 服务端要求 efforts 至少一项；用户把所有档位都取消勾选时回退到三档，
       // 否则保存会被 schema 校验直接拒绝（表现为「点了保存没反应」）。
       const efforts =
@@ -164,7 +164,7 @@ export function useProviderSettings() {
         }
         await refresh();
         if (body.provider) setActiveProviderId(body.provider.id);
-        return { ok: true };
+        return { ok: true, provider: body.provider };
       } catch (caught) {
         return { ok: false, error: caught instanceof Error ? caught.message : String(caught) };
       }
