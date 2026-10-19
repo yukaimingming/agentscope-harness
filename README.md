@@ -1,8 +1,76 @@
 # AgentScope Harness 智能体全功能工作台
 
-基于 **[AgentScope Java v2](https://java.agentscope.io/v2/zh/docs/quickstart)** 的 `HarnessAgent` 核心框架与 **Spring Boot 3** 封装，通过 **AG-UI 协议** 全栈对接现代 React + AI SDK Elements 前端 UI 的智能体工作台应用。
+基于 **[AgentScope Java v2](https://java.agentscope.io/v2/zh/docs/quickstart)** 的 `HarnessAgent` 核心框架与 **Spring Boot 3** 封装，通过 **AG-UI 协议** 全栈对接现代 React + AI SDK Elements 前端 UI 的全功能智能体工作台应用。
 
 全套内置能力（工作区人格、流式输出、会话持久化、双层长期记忆、对话压缩、大工具结果卸载、子智能体、技能、MCP、计划模式、任务清单、Diff 对比、人工审批 HITL）已全部对接到前端。
+
+---
+
+## 📸 功能界面预览 (Feature Showcase)
+
+### 1. 智能体工作台主界面 (Dashboard Overview)
+任务清单与右侧工作区、聊天时间线水平对齐，信息排布井然有序，原生支持中文字符与多任务活动呈现。
+![智能体工作台主界面](docs/images/01-dashboard-overview.png)
+
+---
+
+### 2. 现代输入框与模型切换列表 (Model Selector Dropdown)
+输入框采用现代轻量药丸交互，点击模型胶囊按钮即可向上呼出可用模型列表，支持一键切换并快速跳转提供商设置。
+![模型选择列表](docs/images/02-model-selector-dropdown.png)
+
+---
+
+### 3. Token 用量环形仪表与会话消耗卡片 (Token Meter Card)
+参考微软智能体交互体验，点击药丸环形进度圈弹出详细的 Token 占比分析卡片，直观展现输入输出消耗、首字延时、生成速度与上下文占比。
+![Token用量分析卡片](docs/images/03-token-meter-context-dialog.png)
+
+---
+
+### 4. 背面折叠排队卡片与多分支引导 (Queued Prompt Folded Card)
+模型在生成回复时再次发送提示词，可自由选择“加入排队”或“立即引导”；排队提示词优雅呈现在输入框背面上方（折叠卡片效果），支持随时编辑与撤回。
+![输入框背面折叠排队卡片](docs/images/04-queued-prompt-folded-card.png)
+
+---
+
+### 5. Shadcn UI 官方微光动态思考 (Shimmer Dynamic Thinking)
+思维链及流式输出阶段采用官方 Shimmer 微光文字动效（`<p className="shimmer shimmer-color-blue-500/60">`），赋予思考过程流动质感。
+![Shimmer 蓝色微光动态思考](docs/images/05-shimmer-streaming-thinking.png)
+
+---
+
+### 6. 模型厂商配置与未配置安全拦截 (Settings & Provider Protection)
+设置中心支持自定义 API Base URL、多模型探测与持久化保存；若未配置可用提供商即尝试发信，将触发友好的安全拦截弹窗。
+
+| 模型提供商管理与持久化保存 | 未配置 API 厂商安全拦截提醒 |
+| :---: | :---: |
+| ![模型与提供商设置中心](docs/images/06-settings-providers-config.png) | ![未配置API厂商拦截提醒](docs/images/07-blocked-send-warning-alert.png) |
+
+---
+
+### 7. 任务清单 Todo 打勾联动与统计底栏 (Todo Tasks & StatsLine)
+计划模式下生成的 Todo 任务列表与完成状态实时打勾联动，底部常驻 Token 与耗时统计底栏，保证工作区无遮挡。
+![任务清单Todo打勾联动](docs/images/08-todo-tasks-completion.png)
+
+---
+
+### 8. 多工作区与系统文件夹管理 (Workspace Folder Management)
+支持选择默认工作区与自定义切换系统任意目录路径，一键新建工作区文件夹，全生命周期保障智能体文件读写安全隔离。
+![工作区文件夹管理](docs/images/09-workspace-folder-manager.png)
+
+---
+
+### 9. Git Diff 代码审查与内置交互式终端 (Review Diff & Terminal)
+内置 LCS 行级代码差异高亮对比卡片、一键提交审查与系统终端命令执行窗口，打造闭环的智能体研发体验。
+
+| Git Diff 差异对比审查 | 内置终端交互式命令行 |
+| :---: | :---: |
+| ![Git代码审查Diff](docs/images/10-code-diff-review.png) | ![内置终端命令行](docs/images/11-terminal-execution.png) |
+
+---
+
+### 10. 极致黑白双色主题适配 (Dark & Light Theme)
+支持深色（Dark）与浅色（Light）模式一键切换，所有下拉框、折叠卡片、统计栏与代码框均具备精细的双主题对比度优化。
+![浅色模式全景展示](docs/images/12-light-theme-mode.png)
 
 ---
 
@@ -136,6 +204,8 @@ agentscope-harness/
 │   ├── pnpm-workspace.yaml
 │   ├── apps/web/                         # Vite 前端应用与 UI 组件
 │   └── packages/shared/                  # 前后端通用数据结构定义
+├── docs/                                 # 文档与预览资源
+│   └── images/                           # 项目完整功能截图
 ├── .agentscope/workspace/                # 智能体默认工作区
 │   ├── AGENTS.md                         # 人格与系统指令
 │   ├── tools.json                        # 工具与 MCP 预设
