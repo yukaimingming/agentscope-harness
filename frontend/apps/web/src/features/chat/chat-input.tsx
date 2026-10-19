@@ -147,6 +147,9 @@ function PromptInputAttachmentsDisplay({
   onPreview: (file: ChatAttachment) => void;
 }) {
   const attachments = usePromptInputAttachments();
+  if (attachments.files.length === 0) {
+    return null;
+  }
   return (
     <ChatAttachmentGallery
       files={attachments.files}
@@ -288,16 +291,18 @@ function PromptInputComposer({
       onError={onAttachmentError}
       className="chat-prompt-input rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800/80 dark:bg-[#18181b] shadow-xs dark:shadow-md focus-within:border-zinc-400 dark:focus-within:border-zinc-600 focus-within:ring-0 transition-colors overflow-visible relative outline-none"
     >
-      <PromptInputHeader className="px-3 pt-3">
-        <PromptInputAttachmentsDisplay onPreview={(f) => setPreviewAttachment(f)} />
-      </PromptInputHeader>
+      {attachments.files.length > 0 && (
+        <PromptInputHeader className="px-3 pt-3">
+          <PromptInputAttachmentsDisplay onPreview={(f) => setPreviewAttachment(f)} />
+        </PromptInputHeader>
+      )}
       <PromptInputBody>
         <PromptInputTextarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholderText}
-          className="chat-prompt-textarea min-h-[50px] max-h-[220px] px-3.5 py-2.5 text-[13.5px] text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none border-0 shadow-none focus-visible:ring-0 bg-transparent"
+          className="chat-prompt-textarea block w-full text-left align-top min-h-[44px] max-h-[220px] px-3.5 pt-3 pb-1 text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none border-0 shadow-none focus-visible:ring-0 bg-transparent"
         />
       </PromptInputBody>
 

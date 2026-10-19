@@ -27,6 +27,7 @@ import io.agentscope.harness.agent.memory.MemoryConfig;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.memory.compaction.ToolResultEvictionConfig;
 import io.agentscope.harness.agent.subagent.SubagentDeclaration;
+import com.agentscope.harness.tool.WebSearchTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -54,6 +55,7 @@ public class HarnessAgentManager {
     private final AgentscopeProperties properties;
     private final ProviderService providerService;
     private final WorkspaceService workspaceService;
+    private final WebSearchTool webSearchTool;
     private final ObjectMapper objectMapper;
 
     /** 线程活跃状态记录，用于取消与清理。 */
@@ -67,10 +69,12 @@ public class HarnessAgentManager {
     public HarnessAgentManager(AgentscopeProperties properties,
                                ProviderService providerService,
                                WorkspaceService workspaceService,
+                               WebSearchTool webSearchTool,
                                ObjectMapper objectMapper) {
         this.properties = properties;
         this.providerService = providerService;
         this.workspaceService = workspaceService;
+        this.webSearchTool = webSearchTool;
         this.objectMapper = objectMapper;
     }
 
@@ -138,7 +142,7 @@ public class HarnessAgentManager {
             // 4. 构建 HarnessAgent
             HarnessAgent.Builder builder = HarnessAgent.builder()
                     .name("agentscope-spring-assistant")
-                    .sysPrompt("你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、技能执行与子智能体协同能力。始终使用中文清晰友好地回答。")
+                    .sysPrompt("你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、网络搜索与实时信息检索、技能执行与子智能体协同能力。当用户询问最新资讯、实时动态或天气（例如'深圳天气怎么样'）时，必须调用 web_search 工具获取最新数据和权威来源链接。始终使用中文清晰友好地回答。")
                     .model(model)
                     .workspace(Paths.get(workspaceRoot))
                     .modelExecutionConfig(ExecutionConfig.builder()
@@ -170,6 +174,15 @@ public class HarnessAgentManager {
                             .build());
 
             HarnessAgent agent = builder.build();
+
+            // 替换为全功能网络搜索工具（免第三方 Key 依赖，自带气象与通用网页索引与来源引用）
+            try {
+                agent.getToolkit().removeTool("web_search");
+                agent.getToolkit().registerTool(webSearchTool);
+                log.info("已成功装载全功能网络搜索工具 WebSearchTool");
+            } catch (Exception e) {
+                log.warn("注册 WebSearchTool 异常: {}", e.getMessage());
+            }
 
             // 5. 注册 MCP（如有配置）
             if (properties.getMcpDeepwikiUrl() != null && !properties.getMcpDeepwikiUrl().isBlank()) {

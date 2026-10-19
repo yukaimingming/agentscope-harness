@@ -4,7 +4,9 @@ import {
   BrainCircuitIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
+  ExternalLinkIcon,
   FileSearchIcon,
+  GlobeIcon,
   ListTodoIcon,
   PencilLineIcon,
   TerminalIcon,
@@ -57,6 +59,9 @@ const TOOL_ACTIONS: Record<string, string> = {
   glob: "查找了文件",
   grep: "搜索了文件",
   delete_file: "删除了文件",
+  web_search: "搜索了网络",
+  search_web: "搜索了网络",
+  web_fetch: "抓取了网页",
 };
 
 const ACTIVE_TOOL_ACTIONS: Record<string, string> = {
@@ -70,6 +75,9 @@ const ACTIVE_TOOL_ACTIONS: Record<string, string> = {
   glob: "正在查找文件",
   grep: "正在搜索文件",
   delete_file: "正在删除文件",
+  web_search: "正在搜索网络",
+  search_web: "正在搜索网络",
+  web_fetch: "正在抓取网页",
 };
 
 export function formatElapsedDuration(durationMs: number): string {
@@ -143,12 +151,59 @@ function isLiveActivity(activity: Activity): boolean {
 }
 
 function ActionGlyph({ name, className }: { name: string; className?: string }) {
+  if (name === "web_search" || name === "search_web" || name === "web_fetch" || name.includes("search") || name.includes("web") || name.includes("wiki")) {
+    return <GlobeIcon className={className} />;
+  }
   if (name === "execute") return <TerminalIcon className={className} />;
   if (name === "write_todos") return <PencilLineIcon className={className} />;
   if (name === "read_file" || name === "ls" || name === "grep" || name === "glob") return <FileSearchIcon className={className} />;
   if (name === "task") return <BrainCircuitIcon className={className} />;
   if (name === "delete_file") return <TriangleAlertIcon className={className} />;
   return <ListTodoIcon className={className} />;
+}
+
+export interface ExtractedSource {
+  title: string;
+  url: string;
+  snippet?: string;
+}
+
+function extractToolSources(activity: Activity): ExtractedSource[] {
+  const detail = activity.detail as { output?: unknown } | undefined;
+  if (!detail?.output) return [];
+
+  let parsed: unknown = detail.output;
+  if (typeof detail.output === "string") {
+    try {
+      parsed = JSON.parse(detail.output);
+    } catch {
+      // 尝试匹配文本中的 URL
+      const urlMatches = detail.output.match(/https?:\/\/[^\s"'<>\)]+/g);
+      if (urlMatches && urlMatches.length > 0) {
+        return Array.from(new Set(urlMatches)).slice(0, 5).map((url) => {
+          let host = url;
+          try {
+            host = new URL(url).hostname;
+          } catch {
+            // 保留原样
+          }
+          return { title: host, url };
+        });
+      }
+      return [];
+    }
+  }
+
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    if (Array.isArray(obj.sources)) {
+      return (obj.sources as unknown[])
+        .filter((s): s is ExtractedSource => Boolean(s && typeof s === "object" && "url" in (s as any)))
+        .slice(0, 5);
+    }
+  }
+
+  return [];
 }
 
 function StreamingText({ content, streaming }: { content: string; streaming?: boolean }) {
@@ -192,6 +247,7 @@ function ToolActivityRow({
   const name = toolName(activity);
   const summaryText = toolInputSummary(activity);
   const sections = detailSections(activity);
+  const sources = extractToolSources(activity);
   const detail = activity.detail as { truncated?: unknown } | undefined;
   const tone = activity.status === "failed"
     ? "text-[var(--color-state-error)]"
@@ -208,6 +264,26 @@ function ToolActivityRow({
             {summaryText && <code className="rounded-md bg-[var(--color-surface-3)] px-1.5 py-0.5 font-mono text-[12px] text-[var(--color-text-primary)]">{summaryText}</code>}
             <ChevronDownIcon className="ml-auto size-3.5 shrink-0 transition-transform group-open:rotate-180" />
           </summary>
+          {sources.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">来源引用：</span>
+              {sources.map((src, idx) => (
+                <a
+                  key={`${src.url}-${idx}`}
+                  href={src.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex max-w-[280px] items-center gap-1.5 truncate rounded-full border border-blue-200/80 bg-blue-50/70 dark:border-blue-900/50 dark:bg-blue-950/40 px-2.5 py-0.5 text-[11px] text-blue-600 dark:text-blue-300 transition-colors hover:border-blue-400 hover:bg-blue-100/80 dark:hover:bg-blue-900/60 shadow-2xs"
+                  title={`${src.title}\n${src.url}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <GlobeIcon className="size-3 shrink-0 text-blue-500 dark:text-blue-400" />
+                  <span className="truncate">{src.title || src.url}</span>
+                  <ExternalLinkIcon className="size-2.5 shrink-0 opacity-70" />
+                </a>
+              ))}
+            </div>
+          )}
           <div className="mt-2 space-y-3">
             {sections.map((section) => (
               <section key={section.label}>

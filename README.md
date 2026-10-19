@@ -74,6 +74,25 @@
 
 ---
 
+### 11. 联网搜索能力与地球图标/URL来源外链 (Web Search & Source Citations)
+支持通过内置工具自动联网检索最新信息（如城市天气、即时资讯等），并在执行过程及回答中附带地球图标与可点击的官方权威来源引用胶囊。
+
+| 联网搜索执行全景 | 地球图标与官方来源特写 |
+| :---: | :---: |
+| ![联网搜索执行全景](docs/images/15-web-search-full-view.png) | ![地球图标与官方来源特写](docs/images/14-web-search-with-globe-and-sources.png) |
+
+---
+
+### 12. 规范化提示词输入框与会话加载转圈状态 (Top-Left Prompt Input & Spinning Indicator)
+- **左上角对齐输入**：对齐 AI SDK Elements 官网规范，输入文字紧凑锚定在左上角，支持自适应高度自然向下延展。
+- **无感加载转圈**：左侧会话列表在智能体执行时优雅展示绿色转圈指示器，并去除多余冗余文字。
+
+| 空状态与单行左上角输入 | 多行自适应延展与工作台全景 |
+| :---: | :---: |
+| ![单行左上角输入](docs/images/17-prompt-input-single-line.png) | ![工作台全景优化](docs/images/19-full-view-prompt-input-optimized.png) |
+
+---
+
 ## 1. 架构总览
 
 ```mermaid

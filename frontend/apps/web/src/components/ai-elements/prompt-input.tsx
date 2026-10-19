@@ -921,7 +921,7 @@ export const PromptInput = ({
         ref={formRef}
         {...props}
       >
-        <InputGroup className="overflow-visible border-0 bg-transparent shadow-none ring-0 focus-within:ring-0 focus-visible:ring-0 dark:border-0 dark:has-[[data-slot=input-group-control]:focus-visible]:border-0 outline-none">
+        <InputGroup className="flex flex-col items-stretch justify-start overflow-visible border-0 bg-transparent shadow-none ring-0 focus-within:ring-0 focus-visible:ring-0 dark:border-0 dark:has-[[data-slot=input-group-control]:focus-visible]:border-0 outline-none">
           {children}
         </InputGroup>
       </form>
@@ -1077,14 +1077,22 @@ export type PromptInputHeaderProps = Omit<
 
 export const PromptInputHeader = ({
   className,
+  children,
   ...props
-}: PromptInputHeaderProps) => (
-  <InputGroupAddon
-    align="block-end"
-    className={cn("order-first flex-wrap gap-1", className)}
-    {...props}
-  />
-);
+}: PromptInputHeaderProps) => {
+  if (!children) {
+    return null;
+  }
+  return (
+    <InputGroupAddon
+      align="block-end"
+      className={cn("order-first flex-wrap gap-1", className)}
+      {...props}
+    >
+      {children}
+    </InputGroupAddon>
+  );
+};
 
 export type PromptInputFooterProps = Omit<
   ComponentProps<typeof InputGroupAddon>,
