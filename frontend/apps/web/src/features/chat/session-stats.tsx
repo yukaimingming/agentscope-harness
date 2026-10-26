@@ -1,11 +1,11 @@
-import { memo, useMemo, useRef, useState, useLayoutEffect, useEffect } from "react";
+import { memo, useMemo, useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { type Activity, type RunTokenUsage } from "@deepagent/shared";
 import type { ChatMessage } from "./client-reducer.js";
 import { cn } from "../../lib/utils.js";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip.js";
-import { BarChart2Icon, ClockIcon, ZapIcon, DatabaseIcon, LayersIcon } from "lucide-react";
+import { BarChart2Icon, DatabaseIcon, ZapIcon } from "lucide-react";
 
-/** DeepSeek Harness 官方会话级统计指标 */
+/** 会话级统计指标 */
 export interface SessionStats {
   turns: number;
   steps: number;
@@ -18,7 +18,7 @@ export interface SessionStats {
   tokensPerSecond: number;
 }
 
-/** DeepSeek Harness 上下文构成拆分（系统提示词、工具Schema、历史消息） */
+/** 上下文构成拆分（系统提示词、工具Schema、历史消息） */
 export interface ContextBreakdown {
   systemTokens: number;
   toolsTokens: number;
@@ -39,7 +39,6 @@ export interface EnhancedTokenUsage extends RunTokenUsage {
 
 /**
  * 格式化 Token 数：例如 850, 4.2K, 1.2M
- * 严格对齐 DeepSeek Harness formatTokens 算法
  */
 export function formatTokens(n: number): string {
   const clamped = Math.max(0, Math.round(n));
@@ -51,7 +50,6 @@ export function formatTokens(n: number): string {
 
 /**
  * 格式化耗时：例如 4.2s, 1m15s
- * 严格对齐 DeepSeek Harness formatDuration 算法
  */
 export function formatDuration(ms: number): string {
   const safeMs = Math.max(0, ms);
@@ -77,7 +75,6 @@ export function formatTokensPerSecond(tps: number): string {
 function estimateTokens(text: string): number {
   if (!text) return 0;
   let tokens = 0;
-  // 简易 CJK 字符判断：中文字符按 ~0.7 字符/token (即 1 字约 1.4 token)，英文单词约 4 字符/token
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
     if (code >= 0x4e00 && code <= 0x9fa5) {
@@ -90,7 +87,7 @@ function estimateTokens(text: string): number {
 }
 
 /**
- * 从会话消息和活动列表推导 DeepSeek Harness 全量指标与 Token 消耗
+ * 从会话消息和活动列表推导全量指标与 Token 消耗
  */
 export function deriveSessionStats(
   messages: ChatMessage[],
@@ -101,7 +98,6 @@ export function deriveSessionStats(
   const assistantMessages = messages.filter((m) => m.role === "assistant");
 
   const turns = userMessages.length;
-  // 步数：工具调用活动 + 助手消息步数
   const toolActivities = activities.filter((a) => a.kind === "tool" || a.kind === "file" || a.kind === "subagent");
   const steps = assistantMessages.length + toolActivities.length;
 
@@ -140,36 +136,30 @@ export function deriveSessionStats(
   let outputTokens = 0;
 
   for (const msg of assistantMessages) {
-    // 思考耗时
     const reasoningMs = (msg.reasoningDuration ?? 0) * 1000;
-    // 正文耗时
     const contentMs = (msg.runDurationMs ?? 0) - reasoningMs;
     const msgLlmTime = Math.max(500, (msg.runDurationMs ?? 0) > 0 ? (msg.runDurationMs ?? 0) : (msg.reasoningDuration ?? 1) * 1000 + 1200);
     llmMs += msgLlmTime;
 
-    // 首 Token 延迟（估算或实测）
     const ttft = msg.reasoningStartedAt && msg.createdAt ? Math.max(180, msg.reasoningStartedAt - msg.createdAt) : 320;
     ttftMs += ttft;
     ttftSteps += 1;
 
-    // 解码时长
     const decTime = Math.max(200, contentMs > 0 ? contentMs : 800);
     decodeMs += decTime;
 
-    // 输出 Token（正文 + 思考）
     const msgOutput = estimateTokens(msg.content || "") + estimateTokens(msg.reasoning || "");
     outputTokens += msgOutput;
   }
 
-  // 如果没有足够统计，给予合理的底线平滑
   const avgTtft = ttftSteps > 0 ? ttftMs / ttftSteps : 380;
   const effectiveDecodeMs = Math.max(100, decodeMs);
   const effectiveDecodeTokens = Math.max(outputTokens, 1);
-  const tokensPerSecond = (effectiveDecodeTokens / (effectiveDecodeMs / 1000));
+  const tokensPerSecond = effectiveDecodeTokens / (effectiveDecodeMs / 1000);
 
   // 3. 上下文构成细分（System, Tools, Messages）
-  const systemTokens = 1380; // 工作区规范、AGENTS.md、指令
-  const toolsTokens = 2460;  // 8 大内置工具 schema (todo, edit_file, execute 等)
+  const systemTokens = 1380;
+  const toolsTokens = 2460;
   let messageTokens = 0;
   for (const msg of messages) {
     messageTokens += estimateTokens(msg.content || "");
@@ -181,7 +171,6 @@ export function deriveSessionStats(
   const baseInputTokens = systemTokens + toolsTokens + messageTokens;
   const contextWindow = 131072; // 128K 默认容量
 
-  // 缓存命中估算：系统提示词与工具在多轮交互中恒被 KV Cache 命中
   const cachedInputTokens = Math.min(baseInputTokens, Math.round(systemTokens * 0.95 + toolsTokens * 0.9 + messageTokens * 0.4));
   const finalInput = Math.max(baseInputTokens, providedUsage?.inputTokens ?? 0);
   const finalOutput = Math.max(outputTokens, providedUsage?.outputTokens ?? 0);
@@ -225,8 +214,9 @@ export function deriveSessionStats(
 }
 
 /**
- * DeepSeek Harness 主页面底栏统计条组件（StatsLine）
- * 挂载于输入框上方，全宽居中，展示轮数、步数、LLM/工具耗时、首 Token 与速率、缓存与用量。
+ * 提示框下方统计条（StatsLine）
+ * 严格按照要求：仅展示【Token 速度】、【缓存命中】以及放下来的【用量 (ContextMeter)】，
+ * 并继承参考项目的专属图标（BarChart2Icon、ZapIcon、DatabaseIcon、用量仪表圈）。
  */
 export const StatsLine = memo(function StatsLine({
   messages,
@@ -235,112 +225,70 @@ export const StatsLine = memo(function StatsLine({
 }: {
   messages: ChatMessage[];
   activities: Activity[];
-  providedUsage?: RunTokenUsage | null;
+  providedUsage?: (RunTokenUsage & { tokensPerSecond?: number }) | null;
 }) {
   const { stats, usage } = useMemo(
     () => deriveSessionStats(messages, activities, providedUsage),
     [messages, activities, providedUsage]
   );
 
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [truncated, setTruncated] = useState(false);
+  const speed =
+    providedUsage?.tokensPerSecond && providedUsage.tokensPerSecond > 0
+      ? providedUsage.tokensPerSecond
+      : stats.tokensPerSecond;
 
-  // 组织带图标的分组内容
-  interface StatGroupItem {
-    id: string;
-    icon: React.ReactNode;
-    text: string;
+  const showSpeed = speed > 0 || (stats.turns > 0 && stats.steps > 0);
+  const cacheHitPercent = usage?.cacheHitPercent ?? 0;
+  const hasUsage = Boolean(usage || messages.length > 0);
+
+  if (!hasUsage && !showSpeed && !providedUsage) {
+    return null;
   }
-  const groups: StatGroupItem[] = [];
-
-  if (stats.steps > 0 || stats.turns > 0) {
-    // 分组 1：轮次与步骤
-    groups.push({
-      id: "turns-steps",
-      icon: <LayersIcon className="size-3 text-zinc-400 shrink-0 mr-1" />,
-      text: `${stats.turns} 轮 · ${stats.steps} 步`,
-    });
-
-    // 分组 2：LLM 与工具执行耗时
-    const durations: string[] = [];
-    if (stats.llmMs > 0) durations.push(`LLM ${formatDuration(stats.llmMs)}`);
-    if (stats.toolMs > 0) durations.push(`工具 ${formatDuration(stats.toolMs)}`);
-    if (durations.length > 0) {
-      groups.push({
-        id: "durations",
-        icon: <ClockIcon className="size-3 text-zinc-400 shrink-0 mr-1" />,
-        text: durations.join(" · "),
-      });
-    }
-
-    // 分组 3：首 Token 延迟与吞吐速率
-    const speeds: string[] = [];
-    if (stats.ttftSteps > 0 || stats.ttftMs > 0) {
-      const avgTtft = stats.ttftSteps > 0 ? stats.ttftMs / stats.ttftSteps : stats.ttftMs;
-      speeds.push(`首 token ${formatDuration(avgTtft)}`);
-    }
-    if (stats.tokensPerSecond > 0) {
-      speeds.push(`${formatTokensPerSecond(stats.tokensPerSecond)} tok/s`);
-    }
-    if (speeds.length > 0) {
-      groups.push({
-        id: "speeds",
-        icon: <ZapIcon className="size-3 text-amber-400/90 shrink-0 mr-1" />,
-        text: speeds.join(" · "),
-      });
-    }
-  }
-
-  // 分组 4：缓存命中率与 Token 消耗
-  if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
-    const tokenParts: string[] = [];
-    if (usage.cacheHitPercent > 0) {
-      tokenParts.push(`缓存命中 ${usage.cacheHitPercent}%`);
-    }
-    tokenParts.push(`输入 ${formatTokens(usage.inputTokens)}`);
-    tokenParts.push(`输出 ${formatTokens(usage.outputTokens)}`);
-    groups.push({
-      id: "tokens",
-      icon: <DatabaseIcon className="size-3 text-cyan-400/90 shrink-0 mr-1" />,
-      text: tokenParts.join(" · "),
-    });
-  }
-
-  const line = groups.map((g) => g.text).join(" | ");
-
-  useLayoutEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const measure = () => setTruncated(el.scrollWidth > el.clientWidth);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [line]);
-
-  if (groups.length === 0) return null;
 
   return (
     <div
-      ref={rootRef}
-      title={truncated ? line : undefined}
-      className="flex items-center justify-center text-[11px] leading-5 text-zinc-500 select-none px-4 py-1 mx-auto max-w-4xl overflow-hidden text-ellipsis whitespace-nowrap animate-in fade-in duration-150"
+      className="stats-line flex items-center justify-center text-[11px] leading-5 text-zinc-600 dark:text-zinc-400 select-none px-4 py-1 mx-auto max-w-4xl overflow-visible whitespace-nowrap animate-in fade-in duration-150"
     >
-      <BarChart2Icon className="size-3 text-zinc-500 shrink-0 mr-1.5" />
-      {groups.map((group, i) => (
-        <span key={group.id} className="inline-flex items-center">
-          {i > 0 && <span className="text-zinc-700 mx-2 font-light select-none" aria-hidden="true">|</span>}
-          {group.icon}
-          <span className="font-mono tabular-nums">{group.text}</span>
+      {/* 参考项目图标：左侧 BarChart2Icon */}
+      <BarChart2Icon className="size-3 text-zinc-400 dark:text-zinc-500 shrink-0 mr-1.5" />
+
+      {/* 1. Token 速度 */}
+      {showSpeed && (
+        <span className="inline-flex items-center">
+          <ZapIcon className="size-3 text-amber-500 dark:text-amber-400/90 shrink-0 mr-1" />
+          <span className="font-mono tabular-nums">{formatTokensPerSecond(speed)} tok/s</span>
         </span>
-      ))}
+      )}
+
+      {showSpeed && (
+        <span className="text-zinc-300 dark:text-zinc-700 mx-2.5 font-light select-none" aria-hidden="true">
+          |
+        </span>
+      )}
+
+      {/* 2. 缓存命中 */}
+      <span className="inline-flex items-center">
+        <DatabaseIcon className="size-3 text-cyan-600 dark:text-cyan-400/90 shrink-0 mr-1" />
+        <span className="font-mono tabular-nums">缓存命中 {cacheHitPercent}%</span>
+      </span>
+
+      <span className="text-zinc-300 dark:text-zinc-700 mx-2.5 font-light select-none" aria-hidden="true">
+        |
+      </span>
+
+      {/* 3. 放下来的用量组件 */}
+      <ContextMeter
+        messages={messages}
+        activities={activities}
+        providedUsage={providedUsage}
+      />
     </div>
   );
 });
 
 /**
- * DeepSeek Harness 上下文占用与用量环形进度面板组件（ContextMeter）
+ * 上下文占用与用量环形进度面板组件（ContextMeter）
+ * 挂载于底部统计条中，支持一键呼出详细 Token 与上下文分段占比弹窗。
  */
 export const ContextMeter = memo(function ContextMeter({
   messages,
@@ -357,7 +305,9 @@ export const ContextMeter = memo(function ContextMeter({
   );
 
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ left: number; bottom: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // 环形几何参数：半径 5.5, 直径 14, 周长 2 * PI * 5.5 = 34.5575
   const RADIUS = 5.5;
@@ -368,11 +318,23 @@ export const ContextMeter = memo(function ContextMeter({
   const contextWindow = usage?.contextWindow ?? 131072;
   const percent = usage ? Math.max(1, Math.min(100, Math.round((usedTokens / contextWindow) * 100))) : 0;
 
+  const handleToggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setCoords({
+        left: Math.max(12, Math.min(window.innerWidth - 320, rect.left)),
+        bottom: window.innerHeight - rect.top + 8,
+      });
+    }
+    setOpen((v) => !v);
+  };
+
   // 点击外部自动关闭
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: MouseEvent) => {
-      if (e.target instanceof Node && rootRef.current?.contains(e.target)) return;
+      const target = e.target as Node;
+      if (dialogRef.current?.contains(target) || btnRef.current?.contains(target)) return;
       setOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
@@ -402,18 +364,19 @@ export const ContextMeter = memo(function ContextMeter({
   }, [breakdown, breakdownTotal, percent]);
 
   return (
-    <div className="relative inline-flex items-center" ref={rootRef}>
-      {/* 触发胶囊按钮 */}
+    <div className="relative inline-flex items-center">
+      {/* 触发按钮：仅保留环形占用率仪表圈 */}
       <button
+        ref={btnRef}
         type="button"
         aria-label={`上下文占用 ${percent}%，点击查看详情`}
         title={`上下文占用 ${percent}%（${formatTokens(usedTokens)} / ${formatTokens(contextWindow)}）`}
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleToggle}
         className={cn(
-          "context-meter-btn flex items-center gap-1.5 rounded-md px-2 py-0.5 border text-[11px] transition-colors cursor-pointer select-none whitespace-nowrap shrink-0",
+          "context-meter-btn flex items-center rounded-full p-1 transition-colors cursor-pointer select-none shrink-0",
           usage
-            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-            : "border-zinc-700/60 bg-zinc-800/50 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
+            ? "text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300"
+            : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-500 dark:hover:text-zinc-300"
         )}
       >
         {/* 环形占用率仪表圈 */}
@@ -437,35 +400,42 @@ export const ContextMeter = memo(function ContextMeter({
             strokeLinecap="round"
             strokeDasharray={`${(CIRCUMFERENCE * Math.max(5, percent)) / 100} ${CIRCUMFERENCE}`}
             transform="rotate(-90 7 7)"
-            className={usage ? "text-emerald-400" : "text-zinc-500"}
+            className={usage ? "text-emerald-500 dark:text-emerald-400" : "text-zinc-400 dark:text-zinc-500"}
           />
         </svg>
-        <span className="font-sans font-medium">
-          <span className="hidden sm:inline">用量 </span>
-          {percent > 0 ? `${percent}%` : ""}
-        </span>
       </button>
 
-      {/* 弹出的详细统计面板（完全还原 DeepSeek Harness 布局） */}
-      {open && (
+      {/* 弹出的详细统计面板（通过 Portal 挂载防裁剪，适配黑白双色主题） */}
+      {open && coords && typeof document !== "undefined" && createPortal(
         <div
+          ref={dialogRef}
           role="dialog"
           aria-label="上下文与 Token 用量"
-          className="context-meter-dialog absolute bottom-full mb-2 left-0 z-50 w-76 rounded-xl border border-zinc-800 bg-[#0f0f12] p-3.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 text-left text-zinc-200"
+          style={{
+            position: "fixed",
+            left: `${coords.left}px`,
+            bottom: `${coords.bottom}px`,
+            zIndex: 9999,
+          }}
+          className={cn(
+            "context-meter-dialog w-76 rounded-xl border p-3.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 text-left select-none",
+            "bg-white border-zinc-200 text-zinc-900 shadow-xl",
+            "dark:bg-[#0f0f12] dark:border-zinc-800 dark:text-zinc-200 dark:shadow-2xl"
+          )}
         >
           {/* 头部：上下文已用百分比与总量 */}
           <div className="flex items-center justify-between text-[12px] font-medium mb-1.5">
             <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400">上下文已用</span>
-              <span className="text-emerald-400 font-semibold">{percent}%</span>
+              <span className="text-zinc-500 dark:text-zinc-400">上下文已用</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{percent}%</span>
             </div>
-            <span className="text-[11px] font-mono tabular-nums text-zinc-400">
+            <span className="text-[11px] font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
               ~{formatTokens(usedTokens)} / {formatTokens(contextWindow)}
             </span>
           </div>
 
           {/* 彩色分段长条 */}
-          <div className="flex h-1.5 w-full rounded-full bg-zinc-800/80 overflow-hidden gap-0.5 my-2">
+          <div className="flex h-1.5 w-full rounded-full bg-zinc-200 dark:bg-zinc-800/80 overflow-hidden gap-0.5 my-2">
             {segments.map((seg) => (
               <div
                 key={seg.key}
@@ -477,27 +447,27 @@ export const ContextMeter = memo(function ContextMeter({
 
           {/* 上下文构成拆分 */}
           {breakdown && (
-            <div className="space-y-1 my-2.5 pb-2.5 border-b border-zinc-800/70 text-[11px]">
+            <div className="space-y-1 my-2.5 pb-2.5 border-b border-zinc-200 dark:border-zinc-800/70 text-[11px]">
               <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-zinc-400">
+                <span className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">
                   <span className="size-2 rounded-full bg-purple-400 inline-block" />
                   系统提示词与规范
                 </span>
-                <span className="font-mono tabular-nums text-zinc-300">~{formatTokens(breakdown.systemTokens)}</span>
+                <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-300">~{formatTokens(breakdown.systemTokens)}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-zinc-400">
+                <span className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">
                   <span className="size-2 rounded-full bg-cyan-400 inline-block" />
                   工具定义与 Schema
                 </span>
-                <span className="font-mono tabular-nums text-zinc-300">~{formatTokens(breakdown.toolsTokens)}</span>
+                <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-300">~{formatTokens(breakdown.toolsTokens)}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-zinc-400">
+                <span className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">
                   <span className="size-2 rounded-full bg-blue-400 inline-block" />
                   历史对话消息
                 </span>
-                <span className="font-mono tabular-nums text-zinc-300">~{formatTokens(breakdown.messageTokens)}</span>
+                <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-300">~{formatTokens(breakdown.messageTokens)}</span>
               </div>
             </div>
           )}
@@ -505,26 +475,26 @@ export const ContextMeter = memo(function ContextMeter({
           {/* Token 消耗指标明细 */}
           <div className="space-y-1 text-[11px]">
             <div className="flex items-center justify-between">
-              <span className="text-zinc-400">输入 Tokens</span>
-              <span className="font-mono tabular-nums text-zinc-200">
+              <span className="text-zinc-500 dark:text-zinc-400">输入 Tokens</span>
+              <span className="font-mono tabular-nums text-zinc-800 dark:text-zinc-200">
                 {(usage?.inputTokens ?? 0).toLocaleString()}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-zinc-400">输出 Tokens</span>
-              <span className="font-mono tabular-nums text-zinc-200">
+              <span className="text-zinc-500 dark:text-zinc-400">输出 Tokens</span>
+              <span className="font-mono tabular-nums text-zinc-800 dark:text-zinc-200">
                 {(usage?.outputTokens ?? 0).toLocaleString()}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-zinc-400">缓存命中率</span>
-              <span className="font-mono tabular-nums text-emerald-400 font-medium">
+              <span className="text-zinc-500 dark:text-zinc-400">缓存命中率</span>
+              <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400 font-medium">
                 {usage?.cacheHitPercent ?? 0}% ({formatTokens(usage?.cachedInputTokens ?? 0)})
               </span>
             </div>
-            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 font-medium">
-              <span className="text-zinc-300">累计消耗 Tokens</span>
-              <span className="font-mono tabular-nums text-zinc-100">
+            <div className="flex items-center justify-between pt-1 border-t border-zinc-200 dark:border-zinc-800/60 font-medium">
+              <span className="text-zinc-700 dark:text-zinc-300">累计消耗 Tokens</span>
+              <span className="font-mono tabular-nums text-zinc-900 dark:text-zinc-100">
                 {(usage?.totalTokens ?? 0).toLocaleString()}
               </span>
             </div>
@@ -532,12 +502,13 @@ export const ContextMeter = memo(function ContextMeter({
 
           {/* 性能与速率指标 */}
           {usage && (usage.tokensPerSecond > 0 || usage.llmMs > 0) && (
-            <div className="mt-2.5 pt-2 border-t border-zinc-800/70 flex items-center justify-between text-[10.5px] text-zinc-500 font-mono">
+            <div className="mt-2.5 pt-2 border-t border-zinc-200 dark:border-zinc-800/70 flex items-center justify-between text-[10.5px] text-zinc-500 font-mono">
               <span>解码: {formatTokensPerSecond(usage.tokensPerSecond)} tok/s</span>
               <span>首 token: {formatDuration(usage.ttftMs)}</span>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

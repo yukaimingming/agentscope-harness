@@ -70,7 +70,7 @@ export interface ClientState {
 /** 所有状态转移动作。 */
 export type ClientAction =
   | { type: "addUserMessage"; id: string; content: string; attachments?: Array<FileUIPart & { id: string }> }
-  | { type: "startPendingAssistant"; messageId: string; startedAt: number }
+  | { type: "startPendingAssistant"; messageId: string; startedAt: number; runId?: string }
   | { type: "startAssistant"; runId: string; messageId: string; isProcess?: boolean }
   | { type: "appendAssistant"; messageId: string; delta: string }
   | { type: "endAssistant"; messageId: string }
@@ -100,16 +100,29 @@ function nextClientTimestamp(): number {
 }
 
 /**
+ * 具有结构化正文或最终总结特征的正则表达式。
+ * 凡是包含 Markdown 标题（#{1,6}）、任务完成标识、列表或表格的答复，
+ * 绝不可被判定或回退为过程节点，确保稳固留在正文区流式输出。
+ */
+export const isFinalSummaryStructure =
+  /^(?:#{1,6}\s+(?!步骤)|\*\*(?!步骤)|✅|🎉|📋|检查完成|操作完成|任务完成|任务已完成|总结|汇总|已完成|已存入|当前模式)|[\r\n]+\s*(?:#{1,6}\s|\*\*|-\s|\d+\.\s|\|)/;
+
+/**
  * 当本轮后续出现工具调用或新一轮思考/正文时，将当前轮次已有的过程节点封口标记为 isProcess，
  * 防止后续无思考的总结正文越过工具合并回更早的纯思考节点中。
  */
-function markTurnAssistantsAsProcess(messages: ChatMessage[], runId?: string): ChatMessage[] {
+function markTurnAssistantsAsProcess(messages: ChatMessage[], runId?: string, beforeTimestamp?: number): ChatMessage[] {
   const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
   let changed = false;
   const next = messages.map((msg, idx) => {
     if (idx <= lastUserIndex) return msg;
     if (msg.role !== "assistant") return msg;
     if (runId && msg.runId && msg.runId !== runId) return msg;
+    // 如果指定了时间基准，晚于该时间的助手消息属于工具之后生成的总结答复，绝不可标记为过程
+    if (beforeTimestamp !== undefined && (msg.createdAt ?? 0) > beforeTimestamp) return msg;
+    // 同一轮里又开始了新的助手文本段：此前已产生的所有文本都是过程推进，
+    // 即使它自带 Markdown 标题/列表（如「第一步：……」「## 步骤」），也必须作为过程封口，
+    // 否则会与最后一段总结同时出现在正文区，显示成两段各自带复制按钮的答复。
     const hasGeneratedStep =
       msg.content.length > 0 ||
       msg.streaming ||
@@ -171,13 +184,16 @@ function findCurrentAssistantIndex(
   runId?: string,
   messageId?: string,
 ): number {
+  const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
   if (messageId) {
     const byId = messages.findIndex((m) => m.id === messageId);
     if (
       byId !== -1 &&
+      byId > lastUserIndex &&
       messages[byId]?.role === "assistant" &&
       !messages[byId]?.content &&
-      !messages[byId]?.isProcess
+      !messages[byId]?.isProcess &&
+      (!runId || !messages[byId]?.runId || messages[byId]?.runId === runId)
     ) {
       return byId;
     }
@@ -185,6 +201,7 @@ function findCurrentAssistantIndex(
   const lastMessage = messages.at(-1);
   if (
     lastMessage?.role === "assistant" &&
+    messages.length - 1 > lastUserIndex &&
     !lastMessage.content &&
     !lastMessage.isProcess &&
     (!runId || !lastMessage.runId || lastMessage.runId === runId)
@@ -223,6 +240,7 @@ export function reduceClientEvent(state: ClientState, action: ClientAction): Cli
             role: "assistant",
             content: "",
             streaming: false,
+            runId: action.runId,
             reasoning: "",
             reasoningStreaming: true,
             reasoningStartedAt: action.startedAt,
@@ -331,6 +349,9 @@ export function reduceClientEvent(state: ClientState, action: ClientAction): Cli
       if (index === -1) return state;
       const target = state.messages[index];
       if (!target || target.isProcess) return state;
+      // 后端明确下发的过程标记是权威事实（该文本出现在工具调用之前），
+      // 即使内容包含 Markdown 标题、列表等结构，也必须归入过程时间线，
+      // 否则过程摘要会泄漏到正文区，与最终总结显示成两段。
       const messages = [...state.messages];
       messages[index] = { ...target, isProcess: true };
       return { ...state, messages };
@@ -435,15 +456,18 @@ export function reduceClientEvent(state: ClientState, action: ClientAction): Cli
     }
 
     case "upsertActivity": {
-      // 当工具或子 Agent 卡片到达时，当前轮次此前输出的文本属于过程说明。
+      const existingActivityIndex = state.activities.findIndex((item) => item.id === action.activity.id);
+      const isNewToolCall = existingActivityIndex === -1 && (action.activity.status === "running" || action.activity.status === "pending");
+      // 仅当全新的工具或子 Agent 卡片首次发起时，把发起之前已产生的文本标记为过程说明；
+      // 已有工具的状态更新（如完成、错误、Diff 附加）绝不污染工具之后产生的最终答复！
       const messages =
-        action.activity.kind === "tool" || action.activity.kind === "subagent"
-          ? markTurnAssistantsAsProcess(state.messages, action.activity.runId)
+        isNewToolCall && (action.activity.kind === "tool" || action.activity.kind === "subagent")
+          ? markTurnAssistantsAsProcess(state.messages, action.activity.runId, action.activity.startedAt)
           : state.messages;
       // 同一 ID 只更新同一张卡片。
       // 字段级合并 + 保留最早 startedAt：即使上游发的是增量卡片，
       // 也不会丢掉已经展示过的信息，时间线也不会抖动。
-      const index = state.activities.findIndex((item) => item.id === action.activity.id);
+      const index = existingActivityIndex;
       if (index === -1) {
         // 真实运行中到达的新卡片使用前端单调递增时钟打时间戳，保证与回放文本严格同序；
         // 单元测试构造的小时间戳（< 1e12）保持原值不变。

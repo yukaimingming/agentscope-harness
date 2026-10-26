@@ -64,17 +64,17 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
   const totalChanges = stagedFiles.length + changesFiles.length;
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden bg-black text-zinc-200">
+    <div className="flex flex-1 flex-col h-full overflow-hidden bg-white text-zinc-800 dark:bg-black dark:text-zinc-200">
       {/* 顶部 Review 工具栏（对应图 2） */}
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 px-3">
         {/* 左侧 Review 与 Commit 下拉选择 */}
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-zinc-300">Review</span>
+          <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Review</span>
           <div className="relative">
             <select
               value={selectedCommit}
               onChange={(e) => setSelectedCommit(e.target.value)}
-              className="appearance-none rounded border border-zinc-800 bg-zinc-900 py-1 pl-2.5 pr-7 text-xs text-zinc-200 hover:border-zinc-700 focus:border-zinc-600 focus:outline-none"
+              className="appearance-none rounded border border-zinc-200 bg-white py-1 pl-2.5 pr-7 text-xs text-zinc-800 hover:border-zinc-300 focus:border-blue-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-zinc-700"
             >
               <option value="uncommitted">
                 Uncommitted ({changesFiles.length + stagedFiles.length})
@@ -104,8 +104,8 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
 
             {/* Commit 弹出卡片 */}
             {isCommitModalOpen && (
-              <div className="absolute right-0 top-9 z-50 w-80 rounded-lg border border-zinc-800 bg-zinc-950 p-3 shadow-2xl backdrop-blur">
-                <div className="mb-2 text-xs font-semibold text-zinc-200">
+              <div className="absolute right-0 top-9 z-50 w-80 rounded-lg border border-zinc-200 bg-white p-3 shadow-xl backdrop-blur dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-2xl">
+                <div className="mb-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200">
                   提交 Git 变更
                 </div>
                 <textarea
@@ -113,7 +113,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
                   onChange={(e) => setCommitMsg(e.target.value)}
                   placeholder="输入 commit message 说明..."
                   rows={3}
-                  className="w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none resize-none"
+                  className="w-full rounded border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-900 placeholder-zinc-400 focus:border-blue-500 focus:outline-none resize-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500"
                   autoFocus
                 />
                 {commitError && (
@@ -128,7 +128,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
                   <button
                     type="button"
                     onClick={() => setIsCommitModalOpen(false)}
-                    className="rounded px-2.5 py-1 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                    className="rounded px-2.5 py-1 text-xs text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-200 cursor-pointer"
                   >
                     取消
                   </button>
@@ -155,8 +155,8 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
             type="button"
             onClick={() => setShowSearch(!showSearch)}
             title="搜索变更文件"
-            className={`rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 ${
-              showSearch ? "bg-zinc-800 text-zinc-100" : ""
+            className={`rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 cursor-pointer ${
+              showSearch ? "bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100" : ""
             }`}
           >
             <SearchIcon className="size-3.5" />
@@ -167,7 +167,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
             type="button"
             onClick={refresh}
             title="刷新 Git 变更"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
           >
             <RefreshCwIcon className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -176,7 +176,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
           <button
             type="button"
             title="切换视图"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
           >
             <LayoutListIcon className="size-3.5" />
           </button>
@@ -185,7 +185,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
           <button
             type="button"
             title="更多选项"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
           >
             <MoreVerticalIcon className="size-3.5" />
           </button>
@@ -194,7 +194,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
 
       {/* 搜索过滤栏 */}
       {showSearch && (
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-3 py-1.5">
+        <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-100/90 dark:border-zinc-800 dark:bg-zinc-900/80 px-3 py-1.5">
           <div className="flex items-center flex-1 mr-2">
             <SearchIcon className="size-3.5 text-zinc-500 mr-2 shrink-0" />
             <input
@@ -216,7 +216,7 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
                 }
               }}
               placeholder="过滤文件名称或目录..."
-              className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+              className="w-full bg-transparent text-xs text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none"
               autoFocus
             />
           </div>
@@ -246,11 +246,11 @@ export function ReviewPanel({ workspaceRoot }: ReviewPanelProps) {
               onRefresh={() => selectedFile && setSelectedFile({ ...selectedFile })}
             />
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center h-full p-8 text-center text-zinc-500">
-              <div className="size-10 rounded-full border border-zinc-800 bg-zinc-900/60 flex items-center justify-center mb-3 text-zinc-400">
+            <div className="flex flex-1 flex-col items-center justify-center h-full p-8 text-center text-zinc-500 dark:text-zinc-500">
+              <div className="size-10 rounded-full border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/60 flex items-center justify-center mb-3 text-zinc-600 dark:text-zinc-400">
                 <LayoutListIcon className="size-5" />
               </div>
-              <h3 className="text-sm font-medium text-zinc-300 mb-1">
+              <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-300 mb-1">
                 新建干净工作区
               </h3>
               <p className="text-xs text-zinc-500 max-w-xs">

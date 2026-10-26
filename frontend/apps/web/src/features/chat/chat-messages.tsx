@@ -30,7 +30,7 @@ import {
   MessageAction,
 } from "../../components/ai-elements/message.js";
 import { ProcessActivityGroup, type ProcessTimelineItem } from "./process-activity-group.js";
-import { DiffCard, type FileChangeSummary } from "./diff-card.js";
+import { DiffCard, type FileChangeSummary, type FileRevision } from "./diff-card.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
 import { ApprovalCard } from "./approval-card.js";
 import {
@@ -80,6 +80,8 @@ export interface TurnProcessTimeline {
   answerByHost: Map<string, TurnAnswerState>;
   /** 整轮耗时挂在时间线宿主上，供多段消息场景复用。 */
   durationByHost: Map<string, number>;
+  /** 本轮文件变更 Diff 摘要，严格归属于产生修改的助手消息，绝不泄露到后续对话轮次中。 */
+  diffByMessageId: Map<string, FileChangeSummary[]>;
 }
 
 function timelineRank(item: ProcessTimelineItem): number {
@@ -146,6 +148,47 @@ function projectTimeline(
 }
 
 /**
+ * 从文件活动列表中解析文件差异汇总数据。
+ */
+export function parseFileChangesFromActivities(activities: Activity[]): FileChangeSummary[] {
+  const grouped = new Map<string, FileChangeSummary>();
+  for (const activity of activities) {
+    if (activity.kind !== "file") continue;
+    const detail = activity.detail as
+      | {
+          path?: string;
+          operation?: string;
+          diff?: { additions?: number; deletions?: number; patch?: string; truncated?: boolean };
+        }
+      | undefined;
+    if (!detail?.path || !detail.diff || typeof detail.diff.additions !== "number") continue;
+    const revision: FileRevision = {
+      additions: detail.diff.additions,
+      deletions: detail.diff.deletions ?? 0,
+      patch: detail.diff.patch ?? "",
+      truncated: Boolean(detail.diff.truncated),
+    };
+    const operation = detail.operation === "edit" || detail.operation === "delete" ? detail.operation : "write";
+    const existing = grouped.get(detail.path);
+    if (existing) {
+      existing.additions += revision.additions;
+      existing.deletions += revision.deletions;
+      existing.revisions.push(revision);
+      existing.operation = operation;
+    } else {
+      grouped.set(detail.path, {
+        path: detail.path,
+        operation,
+        additions: revision.additions,
+        deletions: revision.deletions,
+        revisions: [revision],
+      });
+    }
+  }
+  return [...grouped.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
  * 按时间把一轮里的思考、中间说明和工具排进同一条时间线。
  * 时间线挂在本轮第一条助手消息上。
  * 最后一条非过程性质且有正文的消息留在时间线外面，用 Markdown 显示。
@@ -160,6 +203,7 @@ export function buildTurnProcessTimeline(
   const turnHostIds = new Set<string>();
   const answerByHost = new Map<string, TurnAnswerState>();
   const durationByHost = new Map<string, number>();
+  const diffByMessageId = new Map<string, FileChangeSummary[]>();
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (!message || message.role !== "assistant") continue;
@@ -178,22 +222,61 @@ export function buildTurnProcessTimeline(
     }
 
     const runIds = new Set(turnMessages.map((item) => item.runId).filter((id): id is string => Boolean(id)));
-    const firstTime = host.createdAt ?? 0;
+    const userMsg = start > 0 ? messages[start - 1] : null;
+    const turnStartTime = userMsg?.createdAt ?? host.createdAt ?? 0;
     const nextTurnTime = messages[end]?.createdAt;
     const turnActivities = activities.filter((activity) => {
       if (activity.kind !== "tool" && activity.kind !== "subagent") return false;
+      // 轮次隔离：绝不带入上一轮的工具活动
+      if (turnStartTime > 0 && activity.startedAt > 0 && activity.startedAt < turnStartTime) return false;
       if (activity.runId && runIds.size > 0 && !runIds.has(activity.runId)) return false;
-      if (!activity.runId && activity.startedAt < firstTime) return false;
       if (nextTurnTime !== undefined && activity.startedAt >= nextTurnTime) return false;
       return true;
     });
 
+    const allTurnActivities = activities.filter((activity) => {
+      const kind = activity.kind as string;
+      if (
+        kind !== "tool" &&
+        kind !== "subagent" &&
+        kind !== "todo" &&
+        kind !== "reflection" &&
+        kind !== "approval" &&
+        kind !== "file"
+      ) {
+        return false;
+      }
+      if (turnStartTime > 0 && activity.startedAt > 0 && activity.startedAt < turnStartTime) return false;
+      if (activity.runId && runIds.size > 0 && !runIds.has(activity.runId)) return false;
+      if (nextTurnTime !== undefined && activity.startedAt >= nextTurnTime) return false;
+      return true;
+    });
+
+    const plansConcreteTool = (text: string | undefined): boolean =>
+      Boolean(
+        text &&
+          /file_access_[a-z0-9_]+|file_access|run_shell|todos_[a-z0-9_]+|file_memory_[a-z0-9_]+|mode_(get|set)|read_pdf|read_excel|web_search_exa|web_fetch_exa|web_search|background_agents_[a-z0-9_]+/i.test(
+            text,
+          ),
+      );
+    const preambleLead =
+      /^(?:步骤\s*\d+|当前\s*(?:shell|工作区|终端|目录)|我来|我将|让我|正在|先|首先|接下来|准备|调用|使用|执行|通过|我用|我会|我看到|我先|现在我|为了|下面我|继续)/;
+    const intermediateActionHint =
+      /^(?:[^\r\n]{0,40})(?:按规则|先读|再读|先看|再看|先检查|再检查|现在用|再用|先用|改用|换用|继续用|接下来|下一步|准备调用|准备使用|先调用|再调用|已存在.*(?:读|看|检查|修改)|已有内容.*(?:修改|替换|写入))/;
+    const isFinalSummaryStructure =
+      /^(?:#{1,6}\s+(?!步骤)|\*\*(?!步骤)|✅|🎉|📋|检查完成|操作完成|任务完成|任务已完成|总结|汇总|已完成|已存入|当前模式)|[\r\n]+\s*(?:#{1,6}\s|\*\*|-\s|\d+\.\s|\|)/;
+
     const isItemProcessMessage = (item: ChatMessage, msgIdx: number): boolean => {
+      // 1. 已被标记为过程消息（后端 CUSTOM_PROCESS_MESSAGE / isProcess: true），100% 属于时间线过程
       if (item.isProcess === true) return true;
+
+      // 2. 本轮后续已有其他 assistant 消息且有正文内容：前面这条必定是过程说明
       const hasLaterAssistantContent = turnMessages
         .slice(msgIdx + 1)
         .some((later) => Boolean(later.content.trim()));
       if (hasLaterAssistantContent) return true;
+
+      // 3. 在当前消息内容开始时或之后，存在工具调用或子智能体活动：这是工具前过程说明
       const contentStart = item.contentStartedAt ?? item.createdAt ?? 0;
       if (
         Boolean(item.content.trim()) &&
@@ -201,19 +284,31 @@ export function buildTurnProcessTimeline(
       ) {
         return true;
       }
+
+      // 4. 伴随思考且并非本轮最后一条消息
       if (Boolean(item.reasoning) && msgIdx < turnMessages.length - 1) {
         return true;
       }
-      // 【关键修复】：当大模型流式输出中间过渡文本（如“我来为你加载/查询某文件”），
-      // 若该消息伴随思考且文本属于引导短句（字数 < 120 字且以意图动词开头，或在活跃运行中），
-      // 必须留在思考链时间线内部流式展示，严禁跳到外部正文气泡中闪现再缩回！
-      if (
-        item.streaming &&
-        Boolean(item.reasoning) &&
-        (item.content.trim().length < 120 && /^(我来|我将|让我|正在|先|为了|接下来|准备|调用|使用|执行|通过)/.test(item.content.trim()))
-      ) {
-        return true;
+
+      // 5. 流式期间尚未收到 PROCESS_MESSAGE 标记的纯单段工具前过渡句兜底（排除任何带 Markdown 标题/列表/表格的最终总结）
+      if (item.streaming && Boolean(item.content.trim())) {
+        const trimmed = item.content.trim();
+        if (!isFinalSummaryStructure.test(trimmed)) {
+          const hasToolBeforeContent = allTurnActivities.some(
+            (activity) => activity.startedAt > 0 && activity.startedAt <= contentStart,
+          );
+          if (!hasToolBeforeContent && plansConcreteTool(item.reasoning)) {
+            return true;
+          }
+          if (
+            allTurnActivities.length > 0 &&
+            (preambleLead.test(trimmed) || intermediateActionHint.test(trimmed))
+          ) {
+            return true;
+          }
+        }
       }
+
       return false;
     };
 
@@ -233,55 +328,74 @@ export function buildTurnProcessTimeline(
       });
     }
 
-    if (
-      turnActivities.length === 0 &&
-      !turnMessages.some((item, msgIdx) => Boolean(item.reasoning) || isItemProcessMessage(item, msgIdx))
-    ) {
-      continue;
-    }
+    const hasTimelineItems =
+      turnActivities.length > 0 ||
+      turnMessages.some((item, msgIdx) => Boolean(item.reasoning) || isItemProcessMessage(item, msgIdx));
 
-    const items: ProcessTimelineItem[] = [];
-    for (let msgIdx = 0; msgIdx < turnMessages.length; msgIdx += 1) {
-      const item = turnMessages[msgIdx]!;
-      const createdAt = item.createdAt ?? 0;
-      const isProcess = isItemProcessMessage(item, msgIdx);
-      if (item.reasoning) {
-        items.push({
-          id: `reasoning:${item.id}`,
-          kind: "assistant",
-          label: item.reasoningStreaming ? "正在思考" : "已完成分析",
-          content: item.reasoning,
-          startedAt: item.reasoningStartedAt ?? createdAt,
-          streaming: item.reasoningStreaming,
-          section: "reasoning",
-        });
-        if (item.id !== finalMessage?.id && (!item.content.trim() || isProcess)) {
+    if (hasTimelineItems) {
+      const items: ProcessTimelineItem[] = [];
+      for (let msgIdx = 0; msgIdx < turnMessages.length; msgIdx += 1) {
+        const item = turnMessages[msgIdx]!;
+        const createdAt = item.createdAt ?? 0;
+        const isProcess = isItemProcessMessage(item, msgIdx);
+        if (item.reasoning) {
+          items.push({
+            id: `reasoning:${item.id}`,
+            kind: "assistant",
+            label: item.reasoningStreaming ? "正在思考" : "思考",
+            content: item.reasoning,
+            startedAt: item.reasoningStartedAt ?? createdAt,
+            streaming: item.reasoningStreaming,
+            section: "reasoning",
+            reasoningDuration: item.reasoningDuration,
+          });
+          if (!item.content.trim() || isProcess || item.id !== finalMessage?.id) {
+            ownedMessageIds.add(item.id);
+          }
+        }
+        if (isProcess && (item.content.trim() || (item.streaming && !item.reasoningStreaming))) {
+          if (item.content.trim()) {
+            items.push({
+              id: `message:${item.id}`,
+              kind: "assistant",
+              label: item.streaming ? "正在整理过程" : "过程摘要",
+              content: item.content,
+              startedAt: item.contentStartedAt ?? createdAt,
+              streaming: item.streaming,
+            });
+          }
+          ownedMessageIds.add(item.id);
+        }
+        // 防御锁：非最终答复或无实质正文的消息（如中间过程节点、空占位），一律由时间线接管，禁止外漏
+        if (!item.content.trim() || isProcess || item.id !== finalMessage?.id) {
           ownedMessageIds.add(item.id);
         }
       }
-      if (isProcess && (item.content.trim() || (item.streaming && !item.reasoningStreaming))) {
-        if (item.content.trim()) {
-          items.push({
-            id: `message:${item.id}`,
-            kind: "assistant",
-            label: item.streaming ? "正在整理过程" : "已完成分析",
-            content: item.content,
-            startedAt: item.contentStartedAt ?? createdAt,
-            streaming: item.streaming,
-          });
-        }
-        ownedMessageIds.add(item.id);
-      }
-      // 防御锁：非最终答复且无实质正文的消息（如中间过程节点、空占位），一律由时间线接管，禁止外漏
-      if (item.id !== finalMessage?.id && !item.content.trim()) {
-        ownedMessageIds.add(item.id);
-      }
+      for (const activity of turnActivities) items.push({ id: activity.id, kind: "activity", activity });
+      items.sort(compareTimelineItems);
+      byFinalMessage.set(host.id, items);
     }
-    for (const activity of turnActivities) items.push({ id: activity.id, kind: "activity", activity });
-    items.sort(compareTimelineItems);
-    byFinalMessage.set(host.id, items);
+
+    // 轮次文件 Diff 隔离：严格只提取属于本轮的文件修改活动，绝不跨轮污染
+    const turnFileActivities = activities.filter((activity) => {
+      if (activity.kind !== "file") return false;
+      if (activity.runId && runIds.size > 0) {
+        if (!runIds.has(activity.runId)) return false;
+      } else {
+        if (turnStartTime > 0 && activity.startedAt > 0 && activity.startedAt < turnStartTime) return false;
+        if (nextTurnTime !== undefined && activity.startedAt >= nextTurnTime) return false;
+      }
+      return true;
+    });
+
+    const turnFileChanges = parseFileChangesFromActivities(turnFileActivities);
+    if (turnFileChanges.length > 0) {
+      // 若本轮存在独立最终正文且未被时间线接管，优先挂在最终回答消息上；否则挂在本轮宿主消息上
+      const targetDiffMsgId = finalMessage && !ownedMessageIds.has(finalMessage.id) ? finalMessage.id : host.id;
+      diffByMessageId.set(targetDiffMsgId, turnFileChanges);
+    }
   }
-  return { byFinalMessage, ownedMessageIds, turnHostIds, answerByHost, durationByHost };
+  return { byFinalMessage, ownedMessageIds, turnHostIds, answerByHost, durationByHost, diffByMessageId };
 }
 
 export function findPromotedMessageId(
@@ -368,38 +482,13 @@ export function ChatMessages({
     turnHostIds,
     answerByHost,
     durationByHost,
+    diffByMessageId,
   } = timelineView;
 
   // 用户消息原地编辑状态
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
   const [editingAttachments, setEditingAttachments] = useState<ChatAttachment[]>([]);
-
-  const fileChanges = useMemo<FileChangeSummary[]>(() => {
-    const grouped = new Map<string, FileChangeSummary>();
-    for (const activity of activities) {
-      if (activity.kind !== "file") continue;
-      const detail = activity.detail as { path?: string; operation?: string; diff?: { additions?: number; deletions?: number; patch?: string; truncated?: boolean } } | undefined;
-      if (!detail?.path || !detail.diff || typeof detail.diff.additions !== "number") continue;
-      const revision = {
-        additions: detail.diff.additions,
-        deletions: detail.diff.deletions ?? 0,
-        patch: detail.diff.patch ?? "",
-        truncated: Boolean(detail.diff.truncated),
-      };
-      const operation = detail.operation === "edit" || detail.operation === "delete" ? detail.operation : "write";
-      const existing = grouped.get(detail.path);
-      if (existing) {
-        existing.additions += revision.additions;
-        existing.deletions += revision.deletions;
-        existing.revisions.push(revision);
-        existing.operation = operation;
-      } else {
-        grouped.set(detail.path, { path: detail.path, operation, additions: revision.additions, deletions: revision.deletions, revisions: [revision] });
-      }
-    }
-    return [...grouped.values()].sort((a, b) => a.path.localeCompare(b.path));
-  }, [activities]);
 
   const handleCopy = (id: string, text: string) => {
     void navigator.clipboard.writeText(text);
@@ -675,22 +764,29 @@ export function ChatMessages({
               const showLivePlaceholder = processItems.length === 0
                 && turnHostIds.has(message.id)
                 && isLatestTurn
-                && runIsLive;
+                && runIsLive
+                && (!message.runId || message.runId === runSnapshot?.runId);
               // 思考还在增量到达时先不画正文，避免两段抢同一条消息。
               // 已被时间线收下的说明（含运行中、工具之后的中间返回）不在外面再画一份 Markdown。
               const isReasoningStreaming = message.reasoningStreaming === true;
               const hasSubstantialContent = Boolean(message.content && message.content.trim().length > 0);
+              // 外部正文展示防跳动规则：
+              // 1. 绝对不能在时间线内（非过程消息）
+              // 2. 思考不能正在流式输出
+              // 3. 必须已有实质内容，禁止在空内容或思考刚结束时抢跑弹出外漏
               const shouldShowMessageContent =
                 !messageIsInTimeline &&
                 !isReasoningStreaming &&
-                (hasSubstantialContent || (message.streaming && !message.reasoningStreaming));
+                hasSubstantialContent;
               const turnAnswer = answerByHost.get(message.id);
               const hostDurationMs = durationByHost.get(message.id) ?? message.runDurationMs;
+              const turnFileChanges = diffByMessageId.get(message.id) ?? [];
+              const hasDiffSection = turnFileChanges.length > 0;
 
               const hasProcessSection = Boolean(processItems.length > 0 || showLivePlaceholder);
               const hasApprovalSection = Boolean(isLast && approvals.length > 0);
-              // 如果既没有过程时间线，也没有正文内容，也没有审批卡片，整块直接跳过，避免留出多余空容器
-              if (!hasProcessSection && !shouldShowMessageContent && !hasApprovalSection) {
+              // 如果既没有过程时间线，也没有正文内容，也没有审批卡片，也没有文件 Diff 变更卡片，整块直接跳过，避免留出多余空容器
+              if (!hasProcessSection && !shouldShowMessageContent && !hasApprovalSection && !hasDiffSection) {
                 return null;
               }
 
@@ -769,12 +865,18 @@ export function ChatMessages({
                       )}
                     </Message>
                   )}
+
+                  {/* 6. 本轮文件变更卡片：严格绑定在本轮助手消息下方，绝不泄露到后续对话 */}
+                  {hasDiffSection && (
+                    <div className="w-full pt-1">
+                      <DiffCard changes={turnFileChanges} />
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
-        {fileChanges.length > 0 && <DiffCard changes={fileChanges} />}
       </ConversationContent>
       <ConversationScrollButton />
       <ImagePreviewDialog file={previewAttachment} onOpenChange={(open) => { if (!open) setPreviewAttachment(null); }} />

@@ -136,12 +136,12 @@ export function TerminalView({ workspaceRoot }: TerminalViewProps) {
       style={{ fontFamily: "'Cascadia Code', 'Consolas', 'Lucida Console', Courier, monospace" }}
     >
       {/* 终端顶部标题栏（纯正 Windows 终端风格） */}
-      <div className="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-[#1f1f1f] px-3 select-none">
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-zinc-800/80 dark:bg-[#1f1f1f] dark:text-zinc-300 px-3 select-none">
         <div className="flex items-center gap-2">
           <span className="flex size-3 items-center justify-center rounded-sm bg-[#012456] text-[9px] font-bold text-sky-300">
             PS
           </span>
-          <span className="text-xs font-semibold text-zinc-300">Windows PowerShell</span>
+          <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Windows PowerShell</span>
           <span className="text-[10px] text-zinc-500 truncate max-w-[200px]" title={currentCwd}>
             ({currentCwd})
           </span>
@@ -155,7 +155,7 @@ export function TerminalView({ workspaceRoot }: TerminalViewProps) {
               setOutputLines([]);
             }}
             title="清屏 (cls)"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white cursor-pointer"
           >
             <Trash2Icon className="size-3.5" />
           </button>

@@ -116,11 +116,11 @@ public class ReflectionMiddleware implements MiddlewareBase {
                         long ok = results.values().stream().filter(v -> v.endsWith(":SUCCESS")).count();
                         String summaryMsg;
                         if (ok == results.size()) {
-                            summaryMsg = "· [Reflection] 本轮 " + results.size() + " 项工具调用全部成功";
+                            summaryMsg = "本轮 " + results.size() + " 项工具调用全部成功";
                             System.out.println(DIM + summaryMsg + RESET);
                             log.info(summaryMsg);
                         } else {
-                            summaryMsg = "· [Reflection] 本轮 " + results.size() + " 项工具调用：" + ok + " 成功 / "
+                            summaryMsg = "本轮 " + results.size() + " 项工具调用：" + ok + " 成功 / "
                                     + (results.size() - ok) + " 异常";
                             System.out.println(YELLOW + summaryMsg + RESET);
                             log.warn(summaryMsg);
@@ -143,7 +143,7 @@ public class ReflectionMiddleware implements MiddlewareBase {
     public Flux<AgentEvent> onReasoning(Agent agent, RuntimeContext ctx, ReasoningInput in,
                                         Function<ReasoningInput, Flux<AgentEvent>> next) {
         for (String f : inspectWebResults(in.messages())) {
-            String reportMsg = "· [Reflection] 联网自检：" + f;
+            String reportMsg = "联网自检：" + f;
             System.out.println(DIM + reportMsg + RESET);
             log.info(reportMsg);
             notifyListener(reportMsg);
@@ -158,7 +158,7 @@ public class ReflectionMiddleware implements MiddlewareBase {
     private void verify(PendingCheck pc) {
         String content = read(pc.path());
         if (content == null) {
-            String skipMsg = "· [Reflection] 文件不可读、超限或读取超时，已跳过内容核对";
+            String skipMsg = "文件不可读、超限或读取超时，已跳过内容核对";
             System.out.println(DIM + skipMsg + RESET);
             log.info(skipMsg);
             notifyListener(skipMsg);
@@ -174,12 +174,12 @@ public class ReflectionMiddleware implements MiddlewareBase {
         }
 
         if (ok) {
-            String passMsg = "· [Reflection] " + pc.toolName() + "(" + fileName(pc.path()) + ") 自检通过：变更已真实落盘";
+            String passMsg = pc.toolName() + "(" + fileName(pc.path()) + ") 自检通过：变更已真实落盘";
             System.out.println(DIM + passMsg + RESET);
             log.info(passMsg);
             notifyListener(passMsg);
         } else {
-            String failMsg = "⚠ [Reflection] " + pc.toolName() + "(" + fileName(pc.path()) + ") 自检失败：预期变更未在文件中找到";
+            String failMsg = "⚠ " + pc.toolName() + "(" + fileName(pc.path()) + ") 自检失败：预期变更未在文件中找到";
             System.out.println(YELLOW + failMsg + RESET);
             log.warn(failMsg);
             notifyListener(failMsg);

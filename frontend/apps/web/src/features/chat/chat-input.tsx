@@ -11,6 +11,7 @@
 import { useState, useRef, useEffect, useCallback, type KeyboardEventHandler } from "react";
 import {
   ChevronDownIcon,
+  GitBranchIcon,
   CheckIcon,
   SettingsIcon,
   BrainIcon,
@@ -53,7 +54,7 @@ import {
   type RunTokenUsage,
 } from "@deepagent/shared";
 import type { ChatMessage } from "./client-reducer.js";
-import { ContextMeter, StatsLine } from "./session-stats.js";
+import { StatsLine } from "./session-stats.js";
 import { cn } from "../../lib/utils.js";
 import { extractFolderName } from "./use-sessions.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
@@ -100,6 +101,8 @@ interface ChatInputProps {
   onSelectWorkspace?: (path: string | null) => void;
   /** 打开系统文件夹选择器弹窗 */
   onOpenFolderPicker?: () => void;
+  /** 点击 Git 分支徽标时触发（例如打开代码审查/Git面板） */
+  onOpenGitReview?: () => void;
   /** 最近一次运行的 Token 用量（无数据时显示占位提示）。 */
   usage?: RunTokenUsage | null;
   /** 当前会话最新待办计划，显示在输入框上方。 */
@@ -254,7 +257,7 @@ function PromptInputComposer({
         if (hasContent) {
           onSteer(text, currentFiles);
           attachments.clear();
-        } else if (queuedPrompts.length > 0) {
+        } else if (queuedPrompts.length > 0 && queuedPrompts[0]) {
           onExecuteQueued(queuedPrompts[0].id);
         }
         return;
@@ -469,13 +472,6 @@ function PromptInputComposer({
             )}
           </div>
 
-          {/* 1.5 参考 Microsoft agent 样式：点击才显示的 ContextMeter 环形占用率仪表圈与上下文构成/用量面板 */}
-          <ContextMeter
-            messages={messages}
-            activities={activities}
-            providedUsage={usage}
-          />
-
           {/* 2. 思考等级下拉选择样式 */}
           <div className="relative shrink-0" ref={effortDropdownRef}>
             <button
@@ -648,6 +644,7 @@ export function ChatInput({
   customWorkspaces = [],
   onSelectWorkspace,
   onOpenFolderPicker,
+  onOpenGitReview,
   usage,
   todoActivity,
   permissionMode,
@@ -663,6 +660,51 @@ export function ChatInput({
   const [isTodoExpanded, setIsTodoExpanded] = useState(false);
 
   // 工作区下拉选择状态
+  // 获取当前工作区关联的 Git 仓储与分支状态
+  const [gitStatus, setGitStatus] = useState<{
+    isGitRepo: boolean;
+    branch: string;
+    repoRoot: string;
+    changesCount: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!workspaceRoot || workspaceRoot.trim() === "") {
+      setGitStatus(null);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchGitStatus = async () => {
+      try {
+        const res = await fetch(`/api/git/status?root=${encodeURIComponent(workspaceRoot)}`);
+        if (!res.ok) {
+          if (isMounted) setGitStatus(null);
+          return;
+        }
+        const data = await res.json();
+        if (isMounted) {
+          if (data && data.isGitRepo) {
+            const changes = Array.isArray(data.changes) ? data.changes.length : 0;
+            const staged = Array.isArray(data.staged) ? data.staged.length : 0;
+            setGitStatus({
+              isGitRepo: true,
+              branch: data.branch || "main",
+              repoRoot: data.repoRoot || workspaceRoot,
+              changesCount: changes + staged,
+            });
+          } else {
+            setGitStatus(null);
+          }
+        }
+      } catch {
+        if (isMounted) setGitStatus(null);
+      }
+    };
+
+    void fetchGitStatus();
+  }, [workspaceRoot, activities?.length, isRunning]);
+
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
   const workspaceDropdownRef = useRef<HTMLDivElement>(null);
   const todoCardRef = useRef<HTMLDivElement>(null);
@@ -687,10 +729,12 @@ export function ChatInput({
     if (prevIsRunningRef.current && !isRunning && queuedPrompts.length > 0) {
       const [nextPrompt, ...rest] = queuedPrompts;
       setQueuedPrompts(rest);
-      const timer = setTimeout(() => {
-        onSend(nextPrompt.text || "请查看附件中的内容。", nextPrompt.attachments);
-      }, 200);
-      return () => clearTimeout(timer);
+      if (nextPrompt) {
+        const timer = setTimeout(() => {
+          onSend(nextPrompt.text || "请查看附件中的内容。", nextPrompt.attachments);
+        }, 200);
+        return () => clearTimeout(timer);
+      }
     }
     prevIsRunningRef.current = isRunning;
   }, [isRunning, queuedPrompts, onSend]);
@@ -839,109 +883,139 @@ export function ChatInput({
   return (
     <div className="shrink-0 bg-white dark:bg-black px-4 py-4 transition-colors">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="mb-2 flex min-w-0 items-center gap-2">
-          {/* 工作区选择器保持在左侧 */}
-          <div className="relative flex w-fit shrink-0 items-center" ref={workspaceDropdownRef}>
-            <button
-              type="button"
-              data-testid="workspace-mode-selector"
-              onClick={() => {
-                setIsWorkspaceDropdownOpen((v) => !v);
-                setIsTodoExpanded(false);
-                setIsModelDropdownOpen(false);
-                setIsEffortDropdownOpen(false);
-              }}
-              className="group inline-flex items-center gap-1.5 rounded-xl bg-transparent hover:bg-zinc-200/80 dark:hover:bg-zinc-900/80 px-2.5 py-1 text-[13px] font-medium text-zinc-800 dark:text-zinc-100 transition-colors select-none max-w-[280px] border-0 outline-none"
-              title={isDirectChat ? "当前为直接聊天模式（无工作区）" : `当前工作区：${currentWorkspacePath}`}
-            >
-              {isDirectChat ? (
-                <MessageSquareIcon className="size-4 text-zinc-600 dark:text-zinc-300 shrink-0" />
-              ) : (
-                <FolderIcon className="size-4 text-zinc-600 dark:text-zinc-300 shrink-0" />
-              )}
-              <span className="truncate">
-                {isDirectChat ? "直接聊天" : currentWorkspaceName}
-              </span>
-              <ChevronDownIcon
-                className={cn(
-                  "size-3.5 text-zinc-500 dark:text-zinc-400 shrink-0 transition-transform duration-200 ml-0.5",
-                  isWorkspaceDropdownOpen && "rotate-180 text-zinc-800 dark:text-zinc-200",
+        <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+          {/* 左侧：工作区选择器 + Git 分支徽标（紧凑并排） */}
+          <div className="flex min-w-0 items-center gap-1.5 flex-wrap">
+            {/* 工作区选择器保持在左侧 */}
+            <div className="relative flex w-fit shrink-0 items-center" ref={workspaceDropdownRef}>
+              <button
+                type="button"
+                data-testid="workspace-mode-selector"
+                onClick={() => {
+                  setIsWorkspaceDropdownOpen((v) => !v);
+                  setIsTodoExpanded(false);
+                  setIsModelDropdownOpen(false);
+                  setIsEffortDropdownOpen(false);
+                }}
+                className="group inline-flex items-center gap-1.5 rounded-xl bg-transparent hover:bg-zinc-200/80 dark:hover:bg-zinc-900/80 px-2.5 py-1 text-[13px] font-medium text-zinc-800 dark:text-zinc-100 transition-colors select-none max-w-[260px] border-0 outline-none cursor-pointer"
+                title={isDirectChat ? "当前为直接聊天模式（无工作区）" : `当前工作区：${currentWorkspacePath}`}
+              >
+                {isDirectChat ? (
+                  <MessageSquareIcon className="size-4 text-zinc-600 dark:text-zinc-300 shrink-0" />
+                ) : (
+                  <FolderIcon className="size-4 text-zinc-600 dark:text-zinc-300 shrink-0" />
                 )}
-              />
-            </button>
-
-            {/* 下拉菜单面板（大圆角、深灰底、无多余线条、移动悬浮高亮） */}
-            {isWorkspaceDropdownOpen && (
-              <div className="workspace-dropdown-panel absolute left-0 bottom-full mb-2 z-50 w-64 rounded-2xl bg-[#242427] p-1.5 shadow-2xl border-0 animate-in fade-in zoom-in-95 duration-100">
-                {/* 选项 1：直接聊天模式 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSelectWorkspace?.(null);
-                    setIsWorkspaceDropdownOpen(false);
-                  }}
+                <span className="truncate">
+                  {isDirectChat ? "直接聊天" : currentWorkspaceName}
+                </span>
+                <ChevronDownIcon
                   className={cn(
-                    "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
-                    isDirectChat
-                      ? "bg-[#2f2f35] text-white font-medium"
-                      : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
+                    "size-3.5 text-zinc-500 dark:text-zinc-400 shrink-0 transition-transform duration-200 ml-0.5",
+                    isWorkspaceDropdownOpen && "rotate-180 text-zinc-800 dark:text-zinc-200",
                   )}
-                >
-                  <MessageSquareIcon className="size-4 text-zinc-300 shrink-0" />
-                  <span className="truncate">直接聊天</span>
-                  {isDirectChat && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
-                </button>
+                />
+              </button>
 
-                {/* 选项 2..N：工作区列表（无多余分割线，干净紧凑排列） */}
-                <div className="max-h-[220px] overflow-y-auto space-y-0.5 my-0.5 scrollbar-thin scrollbar-thumb-zinc-700">
-                  {customWorkspaces && customWorkspaces.length > 0
-                    ? customWorkspaces.map((wsPath) => {
-                        const isSelected =
-                          !isDirectChat &&
-                          (currentWorkspacePath === wsPath ||
-                            currentWorkspacePath.toLowerCase() === wsPath.toLowerCase());
-                        const name = extractFolderName(wsPath);
-                        return (
-                          <button
-                            key={wsPath}
-                            type="button"
-                            onClick={() => {
-                              onSelectWorkspace?.(wsPath);
-                              setIsWorkspaceDropdownOpen(false);
-                            }}
-                            className={cn(
-                              "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
-                              isSelected
-                                ? "bg-[#2f2f35] text-white font-medium"
-                                : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
-                            )}
-                          >
-                            <FolderIcon className="size-4 text-zinc-300 shrink-0" />
-                            <span className="truncate">{name}</span>
-                            {isSelected && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
-                          </button>
-                        );
-                      })
-                    : null}
+              {/* 下拉菜单面板（大圆角、深灰底、无多余线条、移动悬浮高亮） */}
+              {isWorkspaceDropdownOpen && (
+                <div className="workspace-dropdown-panel absolute left-0 bottom-full mb-2 z-50 w-64 rounded-2xl bg-[#242427] p-1.5 shadow-2xl border-0 animate-in fade-in zoom-in-95 duration-100">
+                  {/* 选项 1：直接聊天模式 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectWorkspace?.(null);
+                      setIsWorkspaceDropdownOpen(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
+                      isDirectChat
+                        ? "bg-[#2f2f35] text-white font-medium"
+                        : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
+                    )}
+                  >
+                    <MessageSquareIcon className="size-4 text-zinc-300 shrink-0" />
+                    <span className="truncate">直接聊天</span>
+                    {isDirectChat && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
+                  </button>
+
+                  {/* 选项 2..N：工作区列表（无多余分割线，干净紧凑排列） */}
+                  <div className="max-h-[220px] overflow-y-auto space-y-0.5 my-0.5 scrollbar-thin scrollbar-thumb-zinc-700">
+                    {customWorkspaces && customWorkspaces.length > 0
+                      ? customWorkspaces.map((wsPath) => {
+                          const isSelected =
+                            !isDirectChat &&
+                            (currentWorkspacePath === wsPath ||
+                              currentWorkspacePath.toLowerCase() === wsPath.toLowerCase());
+                          const name = extractFolderName(wsPath);
+                          return (
+                            <button
+                              key={wsPath}
+                              type="button"
+                              onClick={() => {
+                                onSelectWorkspace?.(wsPath);
+                                setIsWorkspaceDropdownOpen(false);
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors select-none",
+                                isSelected
+                                  ? "bg-[#2f2f35] text-white font-medium"
+                                  : "text-zinc-200 hover:bg-[#2f2f35] hover:text-white",
+                              )}
+                            >
+                              <FolderIcon className="size-4 text-zinc-300 shrink-0" />
+                              <span className="truncate">{name}</span>
+                              {isSelected && <CheckIcon className="size-4 text-white shrink-0 ml-auto" />}
+                            </button>
+                          );
+                        })
+                      : null}
+                  </div>
+
+                  {/* 选项：添加工作区...（使用加号图标，无额外分割线） */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsWorkspaceDropdownOpen(false);
+                      onOpenFolderPicker?.();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] text-zinc-200 hover:bg-[#2f2f35] hover:text-white transition-colors select-none"
+                  >
+                    <PlusIcon className="size-4 text-zinc-300 shrink-0" />
+                    <span className="truncate">添加工作区...</span>
+                  </button>
                 </div>
+              )}
+            </div>
 
-                {/* 选项：添加工作区...（使用加号图标，无额外分割线） */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsWorkspaceDropdownOpen(false);
-                    onOpenFolderPicker?.();
-                  }}
-                  className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] text-zinc-200 hover:bg-[#2f2f35] hover:text-white transition-colors select-none"
-                >
-                  <PlusIcon className="size-4 text-zinc-300 shrink-0" />
-                  <span className="truncate">添加工作区...</span>
-                </button>
-              </div>
-            )}
+            {/* Git 分支胶囊（当前工作区关联了 Git 时展示，无 Git 时不展示） */}
+            {gitStatus?.isGitRepo ? (
+              <button
+                type="button"
+                data-testid="workspace-git-badge"
+                onClick={() => onOpenGitReview?.()}
+                className={cn(
+                  "group inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[12.5px] font-medium transition-colors select-none max-w-[200px] border outline-none",
+                  "bg-zinc-100/90 hover:bg-zinc-200/90 text-zinc-700 border-zinc-200/90",
+                  "dark:bg-zinc-900/60 dark:hover:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800/80",
+                  onOpenGitReview && "cursor-pointer"
+                )}
+                title={`Git 仓库：${gitStatus.repoRoot}\n当前分支：${gitStatus.branch}${gitStatus.changesCount > 0 ? `\n未提交变更：${gitStatus.changesCount} 个文件` : ''}${onOpenGitReview ? '\n点击打开代码审查与分支面板' : ''}`}
+              >
+                <GitBranchIcon className="size-3.5 text-zinc-500 dark:text-zinc-400 shrink-0" />
+                <span className="truncate">{gitStatus.branch}</span>
+                {gitStatus.changesCount > 0 && (
+                  <span
+                    className="ml-0.5 rounded-full px-1.5 py-0.2 text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0"
+                    title={`${gitStatus.changesCount} 个未提交变更文件`}
+                  >
+                    {gitStatus.changesCount}
+                  </span>
+                )}
+              </button>
+            ) : null}
           </div>
 
-          {/* 任务 Todo 列表平行在工作区选择器右侧独立展示（展开详情为绝对定位浮层，互不影响） */}
+          {/* 任务 Todo 列表平行在右侧独立展示（展开详情为绝对定位浮层，互不影响） */}
           {todoActivity ? (
             <div ref={todoCardRef} className="relative flex w-fit shrink-0 items-center">
               <TodoCard
@@ -980,7 +1054,7 @@ export function ChatInput({
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
                     <MessageSquareIcon className="size-3.5 shrink-0 text-zinc-500 dark:text-zinc-400" />
                     <span className="truncate text-[12.5px] font-normal text-zinc-800 dark:text-zinc-200 select-text">
-                      {item.text || (item.attachments.length > 0 ? `[附件: ${item.attachments.map((f) => f.name).join(", ")}]` : "排队任务")}
+                      {item.text || (item.attachments.length > 0 ? `[附件: ${item.attachments.map((f) => (f as any).filename || (f as any).name || "文件").join(", ")}]` : "排队任务")}
                     </span>
                   </div>
 

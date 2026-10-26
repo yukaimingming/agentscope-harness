@@ -103,20 +103,30 @@ public class WebSearchTool {
         List<SearchSource> sources = new ArrayList<>();
         if (isShenzhen) {
             sources.add(new SearchSource(
+                    "中国天气网 - 深圳站",
+                    "https://weather.cma.cn/web/weather/59493.html",
+                    "中国气象局国家气象中心发布的深圳市权威天气预报与气象数据。"
+            ));
+            sources.add(new SearchSource(
                     "深圳市气象局 (台) 官方气象预报平台",
                     "https://weather.sz.gov.cn/",
                     "深圳市气象局发布的实时气象监测与权威预警信息。"
             ));
             sources.add(new SearchSource(
-                    "中国天气网 - 深圳实时天气与一周预报",
-                    "http://www.weather.com.cn/weather/101280601.shtml",
-                    "提供深圳市各区权威气温、相对湿度、降雨概率及生活气象指数。"
+                    "Bing 搜索 - 深圳天气实时资讯",
+                    "https://www.bing.com/search?q=%E6%B7%B1%E5%9C%B3%E5%A4%A9%E6%B0%94",
+                    "聚合全网最新的深圳气温、空气质量与降水概率。"
             ));
         } else {
             sources.add(new SearchSource(
-                    "中国天气网 - " + cityName + "实时天气",
-                    "http://www.weather.com.cn/",
-                    "提供" + cityName + "市权威气温、风向风力与未来天气预报。"
+                    "中国天气网 - " + cityName + "天气预报",
+                    "https://weather.cma.cn/",
+                    "中国气象局官方发布的" + cityName + "权威气象与未来预报。"
+            ));
+            sources.add(new SearchSource(
+                    "Bing 搜索 - " + cityName + "实时天气",
+                    "https://www.bing.com/search?q=" + cityAscii + "+%E5%A4%A9%E6%B0%94",
+                    "聚合全网最新气象资讯。"
             ));
         }
 

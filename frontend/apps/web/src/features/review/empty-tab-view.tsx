@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
-import { GitPullRequestIcon, FileCodeIcon, TerminalIcon, SearchIcon, ArrowRightIcon } from "lucide-react";
+import { GitPullRequestIcon, FileCodeIcon, TerminalIcon, SearchIcon, ArrowRightIcon, GlobeIcon } from "lucide-react";
 import type { GitFileItem } from "./review-types.js";
 
 interface EmptyTabViewProps {
   onOpenReview: () => void;
   onOpenFile: (path?: string) => void;
   onOpenTerminal: () => void;
+  onOpenBrowser?: (url?: string) => void;
   changedFiles?: GitFileItem[];
 }
 
@@ -16,11 +17,19 @@ export function EmptyTabView({
   onOpenReview,
   onOpenFile,
   onOpenTerminal,
+  onOpenBrowser,
   changedFiles = [],
 }: EmptyTabViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
 
   const actions = [
+    {
+      id: "browser",
+      icon: GlobeIcon,
+      label: "Browser",
+      desc: "打开内置 Webview 浏览器预览网页或搜索结果",
+      onClick: () => onOpenBrowser?.("https://www.bing.com"),
+    },
     {
       id: "review",
       icon: GitPullRequestIcon,
@@ -73,7 +82,7 @@ export function EmptyTabView({
   };
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center p-6 bg-black text-zinc-300 select-none">
+    <div className="flex flex-1 flex-col items-center justify-center p-6 bg-zinc-50 text-zinc-700 dark:bg-black dark:text-zinc-300 select-none">
       <div className="w-full max-w-md space-y-4">
         {/* 顶部搜索框（图 1 风格） */}
         <div className="relative w-full">
@@ -84,16 +93,16 @@ export function EmptyTabView({
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search tabs, files, plugins, subagents, artifacts, tasks..."
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 px-10 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 shadow-inner outline-none transition-colors focus:border-zinc-700 focus:bg-zinc-900"
+            className="w-full rounded-lg border border-zinc-200 bg-white px-10 py-2.5 text-xs text-zinc-900 placeholder-zinc-400 shadow-xs outline-none transition-colors focus:border-zinc-400 focus:bg-white dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-200 dark:placeholder-zinc-500 dark:focus:border-zinc-700 dark:focus:bg-zinc-900"
             autoFocus
           />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-500 font-mono">
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 font-mono dark:border-zinc-800 dark:bg-zinc-900">
             Enter
           </span>
         </div>
 
         {/* 快捷操作选项列表（图 1 风格） */}
-        <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/60 p-1.5 shadow-xl backdrop-blur space-y-1">
+        <div className="rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg backdrop-blur space-y-1 dark:border-zinc-800/80 dark:bg-zinc-950/60 dark:shadow-xl">
           {filteredActions.map((action) => {
             const Icon = action.icon;
             return (
@@ -101,18 +110,18 @@ export function EmptyTabView({
                 key={action.id}
                 type="button"
                 onClick={action.onClick}
-                className="group flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-zinc-800/60 hover:text-white cursor-pointer"
+                className="group flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-zinc-100 hover:text-zinc-900 text-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-white dark:text-zinc-300 cursor-pointer"
               >
-                <div className="flex size-7 shrink-0 items-center justify-center rounded border border-zinc-800 bg-zinc-900/90 text-zinc-400 group-hover:border-zinc-700 group-hover:text-zinc-200">
+                <div className="flex size-7 shrink-0 items-center justify-center rounded border border-zinc-200 bg-zinc-100 text-zinc-600 group-hover:border-zinc-300 group-hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-400 dark:group-hover:border-zinc-700 dark:group-hover:text-zinc-200">
                   <Icon className="size-4" />
                 </div>
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium text-zinc-200 group-hover:text-white">
+                    <span className="text-xs font-medium text-zinc-900 group-hover:text-zinc-950 dark:text-zinc-200 dark:group-hover:text-white">
                       {action.label}
                     </span>
                   </div>
-                  <span className="truncate text-[11px] text-zinc-500 group-hover:text-zinc-400">
+                  <span className="truncate text-[11px] text-zinc-500 group-hover:text-zinc-700 dark:group-hover:text-zinc-400">
                     {action.desc}
                   </span>
                 </div>
@@ -123,7 +132,7 @@ export function EmptyTabView({
 
           {/* 搜索命中的工作区文件 */}
           {matchedFiles.length > 0 && (
-            <div className="pt-2 border-t border-zinc-800/80 mt-1">
+            <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800/80 mt-1">
               <div className="px-3 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
                 匹配的文件
               </div>
@@ -132,11 +141,11 @@ export function EmptyTabView({
                   key={file.path}
                   type="button"
                   onClick={() => onOpenFile(file.path)}
-                  className="group flex w-full items-center justify-between px-3 py-2 text-left rounded hover:bg-zinc-800/50"
+                  className="group flex w-full items-center justify-between px-3 py-2 text-left rounded hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <FileCodeIcon className="size-3.5 text-blue-400 shrink-0" />
-                    <span className="text-xs text-zinc-300 group-hover:text-white truncate">
+                    <span className="text-xs text-zinc-800 group-hover:text-zinc-950 dark:text-zinc-300 dark:group-hover:text-white truncate">
                       {file.name}
                     </span>
                     <span className="text-[10px] text-zinc-500 truncate">{file.dir}</span>

@@ -26,6 +26,8 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 import { MarkdownTable } from "./markdown-table.js";
+import { MarkdownCodeBlock } from "./markdown-code-block.js";
+import { openInWebPreview } from "@/features/review/web-preview-events.js";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -328,6 +330,32 @@ export const MessageResponse = memo(
       )}
       components={{
         table: MarkdownTable,
+        code: MarkdownCodeBlock,
+        a: ({ href, children, ...rest }: ComponentProps<"a">) => {
+          const isWebUrl = typeof href === "string" && /^https?:\/\//i.test(href);
+          if (isWebUrl) {
+            return (
+              <a
+                href={href}
+                {...rest}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openInWebPreview(href, typeof children === "string" ? children : undefined);
+                }}
+                className={cn("cursor-pointer underline underline-offset-2 hover:opacity-80 text-blue-600 dark:text-blue-400", rest.className)}
+                title={rest.title ?? `${href}（在右侧 WebView 预览）`}
+              >
+                {children}
+              </a>
+            );
+          }
+          return (
+            <a href={href} {...rest} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          );
+        },
         ...components,
       }}
       {...props}

@@ -53,13 +53,13 @@ export function ReviewFileList({
   const filteredChanges = changesFiles.filter(filterFn);
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto bg-zinc-950 text-xs border-l border-zinc-800 select-none">
+    <div className="flex flex-col h-full overflow-y-auto bg-zinc-50 text-xs border-l border-zinc-200 text-zinc-700 dark:bg-zinc-950 dark:border-zinc-800 dark:text-zinc-300 select-none">
       {/* Staged Changes 分组 */}
-      <div className="border-b border-zinc-800/80">
+      <div className="border-b border-zinc-200 dark:border-zinc-800/80">
         <button
           type="button"
           onClick={() => setStagedExpanded(!stagedExpanded)}
-          className="flex w-full items-center justify-between px-3 py-1.5 font-medium text-zinc-400 hover:bg-zinc-900/60 transition-colors"
+          className="flex w-full items-center justify-between px-3 py-1.5 font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900/60 transition-colors"
         >
           <div className="flex items-center gap-1.5">
             {stagedExpanded ? (
@@ -71,7 +71,7 @@ export function ReviewFileList({
               Staged Changes
             </span>
           </div>
-          <span className="rounded-full bg-zinc-900 px-1.5 py-0.2 text-[10px] text-zinc-500 font-mono">
+          <span className="rounded-full bg-zinc-200 text-zinc-600 px-1.5 py-0.2 text-[10px] font-mono dark:bg-zinc-900 dark:text-zinc-500">
             {filteredStaged.length}
           </span>
         </button>
@@ -93,8 +93,8 @@ export function ReviewFileList({
                     onClick={() => onSelectFile(file)}
                     className={`flex w-full items-center justify-between px-3 py-1.5 text-left transition-colors ${
                       isSelected
-                        ? "bg-zinc-800 text-white font-medium"
-                        : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
+                        ? "bg-blue-50 text-blue-700 font-medium dark:bg-zinc-800 dark:text-white"
+                        : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -129,11 +129,11 @@ export function ReviewFileList({
       </div>
 
       {/* Changes 分组 */}
-      <div className="border-b border-zinc-800/80">
+      <div className="border-b border-zinc-200 dark:border-zinc-800/80">
         <button
           type="button"
           onClick={() => setChangesExpanded(!changesExpanded)}
-          className="flex w-full items-center justify-between px-3 py-1.5 font-medium text-zinc-400 hover:bg-zinc-900/60 transition-colors"
+          className="flex w-full items-center justify-between px-3 py-1.5 font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900/60 transition-colors"
         >
           <div className="flex items-center gap-1.5">
             {changesExpanded ? (
@@ -145,7 +145,7 @@ export function ReviewFileList({
               Changes
             </span>
           </div>
-          <span className="rounded-full bg-zinc-900 px-1.5 py-0.2 text-[10px] text-zinc-500 font-mono">
+          <span className="rounded-full bg-zinc-200 text-zinc-600 px-1.5 py-0.2 text-[10px] font-mono dark:bg-zinc-900 dark:text-zinc-500">
             {filteredChanges.length}
           </span>
         </button>
@@ -167,8 +167,8 @@ export function ReviewFileList({
                     onClick={() => onSelectFile(file)}
                     className={`flex w-full items-center justify-between px-3 py-1.5 text-left transition-colors ${
                       isSelected
-                        ? "bg-zinc-800 text-white font-medium"
-                        : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
+                        ? "bg-blue-50 text-blue-700 font-medium dark:bg-zinc-800 dark:text-white"
+                        : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">

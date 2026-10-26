@@ -6,6 +6,14 @@ echo ===================================================
 echo.
 
 set "JAVA_CMD=java"
+where java >nul 2>nul
+if errorlevel 1 (
+    if exist "D:\tools\jdk-21\jdk-21.0.12.1+1\bin\java.exe" (
+        set "JAVA_CMD=D:\tools\jdk-21\jdk-21.0.12.1+1\bin\java.exe"
+    )
+)
+set "NODE_BIN=E:\Program Files\DeepSeek Harness\resources\runtime\primary-runtime\dependencies\node\bin"
+if exist "%NODE_BIN%" set "PATH=%NODE_BIN%;%PATH%"
 set "MAVEN_CMD=D:\temp\.tools\apache-maven-3.9.11\bin\mvn.cmd"
 if not exist "%MAVEN_CMD%" set "MAVEN_CMD=mvn"
 

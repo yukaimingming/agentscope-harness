@@ -430,3 +430,34 @@ describe("端到端事件序列", () => {
     expect(state.run.status).toBe("completed");
   });
 });
+
+describe("过程消息标记", () => {
+  it("后端明确下发的过程标记对带 Markdown 结构的文本同样生效", () => {
+    let state = apply([
+      { type: "startAssistant", runId: "r1", messageId: "m1" },
+      { type: "appendAssistant", messageId: "m1", delta: "## 步骤 1：读取工作区个性文件\n\n正在读取。" },
+      { type: "endAssistant", messageId: "m1" },
+    ]);
+    state = reduceClientEvent(state, { type: "markProcessMessage", messageId: "m1" });
+
+    expect(state.messages[0]?.isProcess).toBe(true);
+  });
+});
+
+describe("同轮多段文本封口", () => {
+  it("出现新的总结文本段时，带 Markdown 结构的前一段过程文本被封口为过程", () => {
+    const state = apply([
+      { type: "startAssistant", runId: "r1", messageId: "m1" },
+      { type: "appendAssistant", messageId: "m1", delta: "好的，文件已存在。\n\n## 第一步：创建 demo-notes.txt 初始内容\n\n我将创建一个新文件来演示修改流程：" },
+      { type: "endAssistant", messageId: "m1" },
+      { type: "startAssistant", runId: "r1", messageId: "m2" },
+      { type: "appendAssistant", messageId: "m2", delta: "## 总结\n\n已完成全部步骤。" },
+      { type: "endAssistant", messageId: "m2" },
+    ]);
+
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0]?.isProcess).toBe(true);
+    expect(state.messages[1]?.isProcess).not.toBe(true);
+    expect(state.messages[1]?.content).toContain("总结");
+  });
+});

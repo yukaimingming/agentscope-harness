@@ -108,10 +108,10 @@ export function ReviewDiffView({
   }
 
   return (
-    <div className="flex h-full flex-1 flex-col overflow-hidden bg-black text-zinc-300">
+    <div className="flex h-full flex-1 flex-col overflow-hidden bg-white text-zinc-800 dark:bg-black dark:text-zinc-300">
       {/* 顶部：修改文件快速选择条（解决“进去看不到具体修改过的文件”的问题） */}
       {allFiles.length > 0 && (
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-zinc-800 bg-zinc-950/90 px-3 py-1.5 overflow-x-auto select-none">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/90 px-3 py-1.5 overflow-x-auto select-none">
           <div className="flex items-center gap-1 text-[11px] text-zinc-500 font-medium shrink-0 pr-1">
             <LayersIcon className="size-3" />
             <span>变更文件 ({allFiles.length}):</span>
@@ -128,8 +128,8 @@ export function ReviewDiffView({
                   title={item.path}
                   className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] shrink-0 transition-colors border ${
                     isSelected
-                      ? "bg-zinc-800 text-white border-blue-500/80 font-medium shadow-sm"
-                      : "bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200"
+                      ? "bg-white text-blue-600 border-blue-500/80 font-medium shadow-xs dark:bg-zinc-800 dark:text-white dark:border-blue-500/80"
+                      : "bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-900/80 dark:text-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:text-zinc-200"
                   }`}
                 >
                   <span className="truncate max-w-[130px]">{item.name}</span>
@@ -152,12 +152,12 @@ export function ReviewDiffView({
       )}
 
       {/* 单个文件的标题条 */}
-      <div className="flex shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-950/80 px-3 py-2 text-xs">
+      <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800/80 dark:bg-zinc-950/80 px-3 py-2 text-xs">
         <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={() => setIsExpanded(!isExpanded)}
-            className="text-zinc-400 hover:text-zinc-200 cursor-pointer"
+            className="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 cursor-pointer"
           >
             {isExpanded ? (
               <ChevronDownIcon className="size-4" />
@@ -172,7 +172,7 @@ export function ReviewDiffView({
             <FileCodeIcon className="size-4 text-blue-400 shrink-0" />
           )}
 
-          <span className="font-semibold text-zinc-100 truncate">{file.name}</span>
+          <span className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{file.name}</span>
           <span className="text-[11px] text-zinc-500 truncate" title={file.dir}>
             {file.dir}
           </span>
@@ -180,10 +180,10 @@ export function ReviewDiffView({
           <span
             className={`rounded px-1.5 py-0.2 text-[10px] font-mono font-bold ${
               file.status === "U"
-                ? "bg-emerald-950 text-emerald-400 border border-emerald-800/50"
+                ? "bg-emerald-50 text-emerald-700 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-400 dark:border-emerald-800/50"
                 : file.status === "M"
-                  ? "bg-amber-950 text-amber-400 border border-amber-800/50"
-                  : "bg-rose-950 text-rose-400 border border-rose-800/50"
+                  ? "bg-amber-50 text-amber-700 border border-amber-300 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800/50"
+                  : "bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-950 dark:text-rose-400 dark:border-rose-800/50"
             }`}
           >
             {file.status}
@@ -204,7 +204,7 @@ export function ReviewDiffView({
               type="button"
               onClick={onRefresh}
               title="刷新 Diff"
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
             >
               <RefreshCwIcon className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
             </button>
@@ -214,7 +214,7 @@ export function ReviewDiffView({
             type="button"
             onClick={handleCopyPath}
             title="复制文件相对路径"
-            className="flex items-center gap-1 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="flex items-center gap-1 rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
           >
             {copied ? (
               <CheckIcon className="size-3.5 text-emerald-400" />
@@ -227,7 +227,7 @@ export function ReviewDiffView({
 
       {/* 展开内容区 */}
       {isExpanded && (
-        <div className="flex-1 overflow-auto bg-black p-2 font-mono text-xs">
+        <div className="flex-1 overflow-auto bg-white dark:bg-black p-2 font-mono text-xs">
           {loading ? (
             <div className="flex h-32 items-center justify-center text-zinc-500">
               <RefreshCwIcon className="size-4 animate-spin mr-2" />
@@ -276,16 +276,16 @@ export function ReviewDiffView({
             </div>
           ) : (
             /* 代码 / 文本统一 Diff 模式 */
-            <div className="overflow-x-auto rounded border border-zinc-800/80 bg-zinc-950">
+            <div className="overflow-x-auto rounded border border-zinc-200 bg-white dark:border-zinc-800/80 dark:bg-zinc-950">
               {diffLines.length === 0 ? (
                 fallbackContent ? (
                   <div className="min-w-max text-[11.5px] leading-relaxed">
-                    <div className="bg-zinc-900/80 px-3 py-1 text-zinc-400 text-[10px] border-b border-zinc-800">
+                    <div className="bg-zinc-100 text-zinc-600 px-3 py-1 text-[10px] border-b border-zinc-200 dark:bg-zinc-900/80 dark:text-zinc-400 dark:border-zinc-800">
                       文件完整内容预览（共 {fallbackContent.split("\n").length} 行）
                     </div>
                     {fallbackContent.split("\n").map((line, idx) => (
-                      <div key={idx} className="flex items-start hover:bg-zinc-800/40 text-emerald-300 bg-emerald-950/20">
-                        <span className="w-10 shrink-0 text-right pr-2 text-zinc-600 select-none border-r border-zinc-800 text-[10px]">
+                      <div key={idx} className="flex items-start hover:bg-emerald-100/60 text-emerald-800 bg-emerald-50 dark:hover:bg-zinc-800/40 dark:text-emerald-300 dark:bg-emerald-950/20">
+                        <span className="w-10 shrink-0 text-right pr-2 text-zinc-400 select-none border-r border-zinc-200 dark:text-zinc-600 dark:border-zinc-800 text-[10px]">
                           {idx + 1}
                         </span>
                         <span className="w-5 shrink-0 text-center select-none font-bold text-emerald-400">
@@ -307,7 +307,7 @@ export function ReviewDiffView({
                       return (
                         <div
                           key={idx}
-                          className="bg-indigo-950/30 px-3 py-0.5 text-indigo-400 select-none border-y border-indigo-900/40"
+                          className="bg-blue-50 text-blue-700 px-3 py-0.5 select-none border-y border-blue-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-900/40"
                         >
                           {line.text}
                         </div>
@@ -315,7 +315,7 @@ export function ReviewDiffView({
                     }
                     if (line.type === "meta") {
                       return (
-                        <div key={idx} className="text-zinc-600 px-3 py-0.5 select-none text-[10px]">
+                        <div key={idx} className="text-zinc-400 dark:text-zinc-600 px-3 py-0.5 select-none text-[10px]">
                           {line.text}
                         </div>
                       );
@@ -326,20 +326,20 @@ export function ReviewDiffView({
                     return (
                       <div
                         key={idx}
-                        className={`flex items-start hover:bg-zinc-800/40 ${
+                        className={`flex items-start ${
                           isAdd
-                            ? "bg-emerald-950/30 text-emerald-300"
+                            ? "bg-emerald-50/90 text-emerald-900 hover:bg-emerald-100/70 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-zinc-800/40"
                             : isDel
-                              ? "bg-rose-950/30 text-rose-300"
-                              : "text-zinc-300"
+                              ? "bg-rose-50/90 text-rose-900 hover:bg-rose-100/70 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-zinc-800/40"
+                              : "text-zinc-800 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800/40"
                         }`}
                       >
                         {/* 左行号 */}
-                        <span className="w-10 shrink-0 text-right pr-2 text-zinc-600 select-none border-r border-zinc-800 text-[10px]">
+                        <span className="w-10 shrink-0 text-right pr-2 text-zinc-400 select-none border-r border-zinc-200 dark:text-zinc-600 dark:border-zinc-800 text-[10px]">
                           {line.oldNum ?? ""}
                         </span>
                         {/* 右行号 */}
-                        <span className="w-10 shrink-0 text-right pr-2 text-zinc-600 select-none border-r border-zinc-800 text-[10px]">
+                        <span className="w-10 shrink-0 text-right pr-2 text-zinc-400 select-none border-r border-zinc-200 dark:text-zinc-600 dark:border-zinc-800 text-[10px]">
                           {line.newNum ?? ""}
                         </span>
                         {/* 符号 */}
@@ -347,8 +347,8 @@ export function ReviewDiffView({
                           {isAdd ? "+" : isDel ? "-" : " "}
                         </span>
                         {/* 代码正文 */}
-                        <span className="flex-1 whitespace-pre pr-2">
-                          {line.text}
+                        <span className="flex-1 whitespace-pre pr-2 min-h-[1.25rem]">
+                          {line.text || "\u00A0"}
                         </span>
                       </div>
                     );

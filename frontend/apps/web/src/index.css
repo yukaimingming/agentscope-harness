@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-shimmer";
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* 设计令牌：深色工作台基调，活动卡片用色需与状态语义区分。 */
@@ -447,6 +448,8 @@ html.light .workspace-dropdown-panel button.bg-\[\#2f2f35\] svg {
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
 }
 html.light .composer-selector {
   color: #475569 !important;
@@ -802,6 +805,18 @@ html.light aside textarea {
   border-color: #cbd5e1 !important;
   color: #0f172a !important;
 }
+html.light aside .bg-black {
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+}
+html.light aside .border-zinc-800 {
+  border-color: #e2e8f0 !important;
+}
+html.light aside .text-zinc-200,
+html.light aside .text-zinc-300 {
+  color: #1e293b !important;
+}
+
 
 /* ================= shadcn/ui 官方 Shimmer 文字微光动效 ================= */
 /* 参考规范：https://ui.shadcn.com/docs/utils/shimmer */
@@ -886,5 +901,62 @@ html.light aside textarea {
 .shimmer-color-blue-500\/60,
 [class*="shimmer-color-blue-500/60"] {
   --shimmer-color: rgba(59, 130, 246, 0.95);
+}
+
+html.light .shimmer-color-blue-500\/60,
+html.light [class*="shimmer-color-blue-500/60"] {
+  --shimmer-color: rgba(37, 99, 235, 0.95);
+}
+
+.shimmer-color-\[\#378ADD\],
+.shimmer-color-blue {
+  --shimmer-color: #378ADD !important;
+}
+
+.shimmer-color-cyan {
+  --shimmer-color: #06b6d4 !important;
+}
+
+/* ================= ZCode 式渐变流光文字（思考标签用） =================
+ * 对齐 ZCode animated-gradient-text：background-clip:text 三段渐变流动，
+ * 实色(0-34%) → 淡(50%) → 实色(66-100%)，4s 线性循环。 */
+@keyframes zcode-gradient-flow {
+  0% {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.animated-gradient-text {
+  --animated-gradient-text-strong: #e8ecf3;
+  --animated-gradient-text-soft: rgba(232, 236, 243, 0.22);
+  background: linear-gradient(
+    90deg,
+    var(--animated-gradient-text-strong) 0%,
+    var(--animated-gradient-text-strong) 34%,
+    var(--animated-gradient-text-soft) 50%,
+    var(--animated-gradient-text-strong) 66%,
+    var(--animated-gradient-text-strong) 100%
+  );
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: zcode-gradient-flow 4s linear infinite;
+  display: inline-block;
+  transform: translateZ(0);
+  will-change: background-position;
+  backface-visibility: hidden;
+}
+html.light .animated-gradient-text {
+  --animated-gradient-text-strong: #09090b;
+  --animated-gradient-text-soft: rgba(9, 9, 11, 0.24);
+}
+@media (prefers-reduced-motion: reduce) {
+  .animated-gradient-text {
+    animation: none;
+  }
 }
 

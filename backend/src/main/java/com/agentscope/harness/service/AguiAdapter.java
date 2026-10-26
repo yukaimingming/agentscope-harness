@@ -546,7 +546,23 @@ public class AguiAdapter {
         long now = System.currentTimeMillis();
         // 兜底处理：将所有仍在运行中或等待中的工具/活动标记为完成，防止前端死卡在「正在调用」
         for (Activity act : activities.values()) {
-            if ("running".equals(act.getStatus()) || "pending".equals(act.getStatus()) || "waiting_approval".equals(act.getStatus())) {
+            if ("todo".equals(act.getKind()) && act.getDetail() instanceof Activity.TodoDetail td) {
+                // 当整轮任务成功结束并输出最后总结时，待办清单内所有任务均已达成，全部标记为已完成
+                List<Activity.TodoItem> items = td.getItems();
+                if (items != null && !items.isEmpty()) {
+                    for (Activity.TodoItem item : items) {
+                        item.setStatus("completed");
+                    }
+                    td.setCompleted(items.size());
+                    act.setStatus("completed");
+                    act.setSubtitle("已完成 (" + items.size() + "/" + items.size() + ")");
+                    if (act.getEndedAt() == 0) {
+                        act.setEndedAt(now);
+                        act.setDurationMs(Math.max(0, now - act.getStartedAt()));
+                    }
+                    emitActivity(act);
+                }
+            } else if ("running".equals(act.getStatus()) || "pending".equals(act.getStatus()) || "waiting_approval".equals(act.getStatus())) {
                 act.setStatus("completed");
                 act.setSubtitle("完成");
                 if (act.getEndedAt() == 0) {

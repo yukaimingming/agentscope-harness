@@ -20,6 +20,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import { MarkdownCodeBlock } from "./markdown-code-block.js";
 
 import { Shimmer } from "./shimmer";
 
@@ -191,9 +192,9 @@ const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number, elap
   if (isStreaming) {
     return (
       <span className="flex items-center gap-1.5 font-medium text-xs text-zinc-300">
-        <span className="shimmer shimmer-color-blue-500/60 font-medium inline-block">
+        <Shimmer as="span" duration={2} spread={3}>
           正在思考中
-        </span>
+        </Shimmer>
         <span className="tabular-nums text-zinc-400">{elapsedSeconds} 秒</span>
       </span>
     );
@@ -257,7 +258,11 @@ export const ReasoningContent = memo(
         {...props}
       >
         <div className={cn(isStreaming ? "streaming-caret" : "")}>
-          {content ? <Streamdown>{content}</Streamdown> : null}
+          {content ? (
+            <Streamdown components={{ code: MarkdownCodeBlock }}>
+              {content}
+            </Streamdown>
+          ) : null}
         </div>
       </CollapsibleContent>
     );

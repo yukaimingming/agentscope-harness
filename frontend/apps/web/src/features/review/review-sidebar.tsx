@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ReviewPanel } from "./review-panel.js";
 import { EmptyTabView } from "./empty-tab-view.js";
 import { TerminalView } from "./terminal-view.js";
 import { FileViewer } from "./file-viewer.js";
+import { BrowserTabView } from "./browser-tab-view.js";
+import { OPEN_WEB_PREVIEW_EVENT, type OpenWebPreviewDetail } from "./web-preview-events.js";
 import {
   GitPullRequestIcon,
   PlusIcon,
@@ -13,13 +15,15 @@ import {
   TerminalIcon,
   FileCodeIcon,
   SearchIcon,
+  GlobeIcon,
 } from "lucide-react";
 
 interface TabItem {
   id: string;
   title: string;
-  type: "review" | "empty" | "terminal" | "file";
+  type: "review" | "empty" | "terminal" | "file" | "browser";
   filePath?: string;
+  url?: string;
 }
 
 interface ReviewSidebarProps {
@@ -35,7 +39,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
   ]);
   const [activeTabId, setActiveTabId] = useState<string>("main-panel");
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [width, setWidth] = useState(660);
+  const [width, setWidth] = useState(460);
   const [isResizing, setIsResizing] = useState(false);
 
   // 拖拽调节宽度
@@ -47,7 +51,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaX = startX - moveEvent.clientX;
-      const nextWidth = Math.max(380, Math.min(window.innerWidth - 300, startWidth + deltaX));
+      const nextWidth = Math.max(360, Math.min(560, startWidth + deltaX));
       setWidth(nextWidth);
     };
 
@@ -145,6 +149,94 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
     }
   };
 
+  /** 打开内置 Webview 浏览器预览 */
+  const handleOpenBrowser = (url: string = "https://www.bing.com") => {
+    let host = url;
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      // 忽略
+    }
+    const displayTitle = host || "Browser";
+
+    const existingBrowser = tabs.find((t) => t.type === "browser");
+    if (existingBrowser) {
+      setTabs((prev) =>
+        prev.map((t) => (t.id === existingBrowser.id ? { ...t, title: displayTitle, url } : t))
+      );
+      setActiveTabId(existingBrowser.id);
+      return;
+    }
+
+    const curTab = tabs.find((t) => t.id === activeTabId);
+    if (curTab && curTab.type === "empty") {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId ? { ...t, title: displayTitle, type: "browser", url } : t
+        )
+      );
+    } else {
+      const newId = `browser-${Date.now()}`;
+      setTabs((prev) => [
+        ...prev,
+        { id: newId, title: displayTitle, type: "browser", url },
+      ]);
+      setActiveTabId(newId);
+    }
+  };
+
+  /** 监听全局打开 Webview 预览事件（如网络搜索来源引用点击） */
+  useEffect(() => {
+    const handleOpenPreview = (e: Event) => {
+      const customEvent = e as CustomEvent<OpenWebPreviewDetail>;
+      const { url, title } = customEvent.detail || {};
+      if (!url) return;
+
+      // 如果侧边栏当前处于收起状态，立即自动展开！
+      if (!isOpen) {
+        onToggle();
+      }
+
+      let host = url;
+      try {
+        host = new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        // 忽略
+      }
+      const displayTitle = title?.trim() || host;
+
+      setTabs((prev) => {
+        const existingBrowser = prev.find((t) => t.type === "browser");
+        if (existingBrowser) {
+          setActiveTabId(existingBrowser.id);
+          return prev.map((t) =>
+            t.id === existingBrowser.id ? { ...t, title: displayTitle, url } : t
+          );
+        }
+
+        const curTab = prev.find((t) => t.id === activeTabId);
+        if (curTab && curTab.type === "empty") {
+          setActiveTabId(curTab.id);
+          return prev.map((t) =>
+            t.id === curTab.id ? { ...t, title: displayTitle, type: "browser", url } : t
+          );
+        }
+
+        const newId = `browser-${Date.now()}`;
+        setActiveTabId(newId);
+        return [
+          ...prev,
+          { id: newId, title: displayTitle, type: "browser", url },
+        ];
+      });
+    };
+
+    window.addEventListener(OPEN_WEB_PREVIEW_EVENT, handleOpenPreview);
+    return () => {
+      window.removeEventListener(OPEN_WEB_PREVIEW_EVENT, handleOpenPreview);
+    };
+  }, [isOpen, onToggle, activeTabId]);
+
   if (!isOpen) {
     return null;
   }
@@ -153,6 +245,8 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
 
   const getTabIcon = (type: TabItem["type"]) => {
     switch (type) {
+      case "browser":
+        return <GlobeIcon className="size-3.5 text-sky-400" />;
       case "review":
         return <GitPullRequestIcon className="size-3.5 text-zinc-400 group-hover:text-zinc-200" />;
       case "terminal":
@@ -169,7 +263,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
   return (
     <aside
       style={{ width: isFullScreen ? "100%" : `${width}px` }}
-      className={`relative flex flex-col h-full shrink-0 border-l border-zinc-800 bg-black shadow-2xl transition-all duration-150 ${
+      className={`relative flex flex-col h-full shrink-0 border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-black shadow-2xl transition-all duration-150 ${
         isResizing ? "select-none" : ""
       }`}
     >
@@ -183,7 +277,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
       )}
 
       {/* 顶部 Tab 栏（对应图 1 与图 2 顶部） */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-zinc-800/90 bg-zinc-950 px-2 select-none">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800/90 dark:bg-zinc-950 px-2 select-none">
         {/* 左侧标签页列表 */}
         <div className="flex items-center gap-1 overflow-x-auto min-w-0 pr-2">
           {tabs.map((tab) => {
@@ -194,8 +288,8 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
                 onClick={() => setActiveTabId(tab.id)}
                 className={`group flex items-center gap-1.5 rounded-t px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors border-b-2 ${
                   isActive
-                    ? "bg-zinc-900 text-white border-blue-500 shadow-sm"
-                    : "text-zinc-400 border-transparent hover:bg-zinc-900/50 hover:text-zinc-200"
+                    ? "bg-white text-zinc-900 border-blue-600 shadow-xs dark:bg-zinc-900 dark:text-white dark:border-blue-500"
+                    : "text-zinc-600 border-transparent hover:bg-zinc-200/60 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900/50 dark:hover:text-zinc-200"
                 }`}
               >
                 {getTabIcon(tab.type)}
@@ -204,7 +298,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
                   type="button"
                   onClick={(e) => handleCloseTab(tab.id, e)}
                   title={tabs.length <= 1 ? "关闭并收起侧边栏" : "关闭标签"}
-                  className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                  className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -217,7 +311,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
             type="button"
             onClick={handleAddTab}
             title="新建标签页"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
           >
             <PlusIcon className="size-3.5" />
           </button>
@@ -229,7 +323,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
             type="button"
             onClick={() => setIsFullScreen(!isFullScreen)}
             title={isFullScreen ? "退出全屏" : "全屏显示"}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
           >
             {isFullScreen ? (
               <Minimize2Icon className="size-3.5" />
@@ -242,7 +336,7 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
             type="button"
             onClick={onToggle}
             title="收起右侧边栏"
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
           >
             <PanelRightCloseIcon className="size-3.5" />
           </button>
@@ -259,7 +353,11 @@ export function ReviewSidebar({ isOpen, onToggle, workspaceRoot }: ReviewSidebar
             onOpenReview={handleOpenReview}
             onOpenFile={handleOpenFile}
             onOpenTerminal={handleOpenTerminal}
+            onOpenBrowser={handleOpenBrowser}
           />
+        )}
+        {activeTab?.type === "browser" && (
+          <BrowserTabView initialUrl={activeTab.url} />
         )}
         {activeTab?.type === "terminal" && (
           <TerminalView workspaceRoot={workspaceRoot} />

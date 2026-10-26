@@ -755,6 +755,7 @@ export function App() {
           {/* 底部输入框（支持输入框上方对齐的工作区下拉选择、模型下拉选择与思考等级） */}
           <ChatInput
             todoActivity={latestTodoActivity}
+            onOpenGitReview={toggleReview}
             onSend={handleSend}
             onStop={() => void stop()}
             isRunning={isRunning}

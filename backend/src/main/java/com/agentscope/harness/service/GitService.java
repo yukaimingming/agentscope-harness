@@ -42,10 +42,13 @@ public class GitService {
             current = current.getParentFile();
         }
 
-        // 保底使用当前运行的工作区目录或工程根目录
+        // 保底使用当前运行的工作区目录或工程根目录（向上回溯找到 .git 目录）
         File fallback = new File(System.getProperty("user.dir", "."));
-        if (new File(fallback, ".git").exists()) {
-            return fallback;
+        while (fallback != null && fallback.exists()) {
+            if (new File(fallback, ".git").exists()) {
+                return fallback;
+            }
+            fallback = fallback.getParentFile();
         }
         return new File(base);
     }
@@ -278,7 +281,7 @@ public class GitService {
      */
     public Map<String, Object> readFileContent(String customPath, String relativePath) {
         File repo = getGitRoot(customPath);
-        File file = new File(repo, relativePath);
+        File file = new File(relativePath).isAbsolute() ? new File(relativePath) : new File(repo, relativePath);
         if (!file.exists() || !file.isFile()) {
             return Map.of("ok", false, "error", "文件不存在: " + relativePath);
         }
