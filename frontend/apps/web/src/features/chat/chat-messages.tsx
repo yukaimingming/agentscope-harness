@@ -15,7 +15,8 @@
  * 6. 人工安全审批与纯净 Markdown 渲染。
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { StickToBottomContext } from "use-stick-to-bottom";
 import {
   Conversation,
   ConversationContent,
@@ -30,6 +31,7 @@ import {
   MessageAction,
 } from "../../components/ai-elements/message.js";
 import { ProcessActivityGroup, type ProcessTimelineItem } from "./process-activity-group.js";
+import { ConversationTurnNavigator, type ConversationTurn } from "./conversation-turn-navigator.js";
 import { DiffCard, type FileChangeSummary, type FileRevision } from "./diff-card.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
 import { ApprovalCard } from "./approval-card.js";
@@ -82,7 +84,13 @@ export interface TurnProcessTimeline {
   durationByHost: Map<string, number>;
   /** 本轮文件变更 Diff 摘要，严格归属于产生修改的助手消息，绝不泄露到后续对话轮次中。 */
   diffByMessageId: Map<string, FileChangeSummary[]>;
+  /** 尚待判定归属（过程说明 / 最终总结）的短流式文本，暂不渲染以避免来回跳动。 */
+  pendingMessageIds: Set<string>;
 }
+
+/** 短流式文本判定阈值：超过该长度（或出现段落）即视为最终总结开始真流式输出。 */
+const PENDING_TEXT_THRESHOLD = 48;
+const PENDING_TEXT_THRESHOLD_AFTER_TOOLS = 100;
 
 function timelineRank(item: ProcessTimelineItem): number {
   if (item.kind === "activity") return 2;
@@ -204,6 +212,7 @@ export function buildTurnProcessTimeline(
   const answerByHost = new Map<string, TurnAnswerState>();
   const durationByHost = new Map<string, number>();
   const diffByMessageId = new Map<string, FileChangeSummary[]>();
+  const pendingMessageIds = new Set<string>();
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (!message || message.role !== "assistant") continue;
@@ -265,6 +274,23 @@ export function buildTurnProcessTimeline(
       /^(?:[^\r\n]{0,40})(?:按规则|先读|再读|先看|再看|先检查|再检查|现在用|再用|先用|改用|换用|继续用|接下来|下一步|准备调用|准备使用|先调用|再调用|已存在.*(?:读|看|检查|修改)|已有内容.*(?:修改|替换|写入))/;
     const isFinalSummaryStructure =
       /^(?:#{1,6}\s+(?!步骤)|\*\*(?!步骤)|✅|🎉|📋|检查完成|操作完成|任务完成|任务已完成|总结|汇总|已完成|已存入|当前模式)|[\r\n]+\s*(?:#{1,6}\s|\*\*|-\s|\d+\.\s|\|)/;
+    /**
+     * 流式过程中用于判定的“普通文本”视图：
+     * 去掉 Markdown 标题符号、代码围栏和加粗/行内代码标记，
+     * 避免模型把过程说明写成「### 当前文件内容如下」时被结构化正文规则误判为最终总结，
+     * 从而出现先跳到总结区、再缩回时间线的闪烁。
+     */
+    const plainHintText = (text: string): string =>
+      text
+        .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+        .replace(/^[ \t]{0,3}(?:```|~~~)[^\n]*$/gm, "")
+        .replace(/^[ \t]{0,3}>[ \t]?/gm, "")
+        .replace(/\*\*|__/g, "")
+        .replace(/`/g, "")
+        .trim();
+    /** 流式过程中明显是在“继续操作”的过程说明（而不是最终总结）。 */
+    const streamingProcessHint =
+      /^(?:当前(?:文件|目录|工作区|内容)|文件内容如下|(?:现在|接下来|下一步|下面|然后|接着|之后)(?:我|来|将|会|需要)?|第[一二三四五六七八九十0-9]+步|我来|我将|让我|首先|先|为了|准备|继续|好的[，,]?\s*(?:我|现在|接下来|下面))/;
 
     const isItemProcessMessage = (item: ChatMessage, msgIdx: number): boolean => {
       // 1. 已被标记为过程消息（后端 CUSTOM_PROCESS_MESSAGE / isProcess: true），100% 属于时间线过程
@@ -276,8 +302,23 @@ export function buildTurnProcessTimeline(
         .some((later) => Boolean(later.content.trim()));
       if (hasLaterAssistantContent) return true;
 
-      // 3. 在当前消息内容开始时或之后，存在工具调用或子智能体活动：这是工具前过程说明
       const contentStart = item.contentStartedAt ?? item.createdAt ?? 0;
+      const hintText = plainHintText(item.content.trim());
+
+      // 3. 流式过程中带「操作引导」语气的说明（即使写成 ### 标题）先留在时间线内，
+      //    等后续工具调用确认，避免先闪现到总结区再跳回时间线。
+      if (
+        item.streaming &&
+        Boolean(hintText) &&
+        turnActivities.length > 0 &&
+        (streamingProcessHint.test(hintText) ||
+          preambleLead.test(hintText) ||
+          intermediateActionHint.test(hintText))
+      ) {
+        return true;
+      }
+
+      // 4. 在当前消息内容开始时或之后，存在工具调用或子智能体活动：这是工具前过程说明
       if (
         Boolean(item.content.trim()) &&
         turnActivities.some((activity) => activity.startedAt >= contentStart)
@@ -285,12 +326,12 @@ export function buildTurnProcessTimeline(
         return true;
       }
 
-      // 4. 伴随思考且并非本轮最后一条消息
+      // 5. 伴随思考且并非本轮最后一条消息
       if (Boolean(item.reasoning) && msgIdx < turnMessages.length - 1) {
         return true;
       }
 
-      // 5. 流式期间尚未收到 PROCESS_MESSAGE 标记的纯单段工具前过渡句兜底（排除任何带 Markdown 标题/列表/表格的最终总结）
+      // 6. 流式期间尚未收到 PROCESS_MESSAGE 标记的纯单段工具前过渡句兜底（排除任何带 Markdown 标题/列表/表格的最终总结）
       if (item.streaming && Boolean(item.content.trim())) {
         const trimmed = item.content.trim();
         if (!isFinalSummaryStructure.test(trimmed)) {
@@ -302,7 +343,7 @@ export function buildTurnProcessTimeline(
           }
           if (
             allTurnActivities.length > 0 &&
-            (preambleLead.test(trimmed) || intermediateActionHint.test(trimmed))
+            (preambleLead.test(hintText) || intermediateActionHint.test(hintText))
           ) {
             return true;
           }
@@ -326,6 +367,17 @@ export function buildTurnProcessTimeline(
         streaming: finalMessage.streaming,
         complete: !finalMessage.streaming,
       });
+    }
+
+    // 尚未判定归属的流式短文本先不渲染到正文：长文本（或已带最终总结结构）才实时展示，
+    // 避免短过程说明/总结正文在流式过程中先闪进正文区、被判定后又跳回时间线的来回跳动。
+    for (let msgIdx = 0; msgIdx < turnMessages.length; msgIdx += 1) {
+      const item = turnMessages[msgIdx]!;
+      if (!item.streaming || !item.content.trim() || isItemProcessMessage(item, msgIdx)) continue;
+      const threshold = turnActivities.length > 0 ? PENDING_TEXT_THRESHOLD_AFTER_TOOLS : PENDING_TEXT_THRESHOLD;
+      if (item.content.trim().length < threshold && !isFinalSummaryStructure.test(item.content.trim())) {
+        pendingMessageIds.add(item.id);
+      }
     }
 
     const hasTimelineItems =
@@ -395,7 +447,7 @@ export function buildTurnProcessTimeline(
       diffByMessageId.set(targetDiffMsgId, turnFileChanges);
     }
   }
-  return { byFinalMessage, ownedMessageIds, turnHostIds, answerByHost, durationByHost, diffByMessageId };
+  return { byFinalMessage, ownedMessageIds, turnHostIds, answerByHost, durationByHost, diffByMessageId, pendingMessageIds };
 }
 
 export function findPromotedMessageId(
@@ -483,6 +535,7 @@ export function ChatMessages({
     answerByHost,
     durationByHost,
     diffByMessageId,
+    pendingMessageIds,
   } = timelineView;
 
   // 用户消息原地编辑状态
@@ -511,8 +564,32 @@ export function ChatMessages({
     setEditingMessageId(null);
   };
 
+  // StickToBottom 上下文：给回合导航条提供真实滚动元素与解除粘底的能力
+  const stickContextRef = useRef<StickToBottomContext | null>(null);
+  const getScrollElement = useCallback(() => stickContextRef.current?.scrollRef.current ?? null, []);
+  const stopStickyScroll = useCallback(() => stickContextRef.current?.stopScroll(), []);
+
+  // 左侧回合导航条的数据：每个用户消息开启一个回合（对齐 ZCode ConversationTurnNavigator）
+  const turns = useMemo<ConversationTurn[]>(
+    () =>
+      messages
+        .filter((item) => item.role === "user")
+        .map((item) => ({
+          id: item.id,
+          time: formatMessageTime(item.createdAt),
+          preview:
+            item.content
+              .split(/\r?\n/)
+              .find((line) => line.trim())
+              ?.trim()
+              .slice(0, 80) ?? "(图片或文件消息)",
+        })),
+    [messages],
+  );
+
   return (
-    <Conversation className="min-h-0 flex-1 bg-white dark:bg-black">
+    <div className="relative flex min-h-0 flex-1 @container">
+      <Conversation contextRef={stickContextRef} className="min-h-0 flex-1 bg-white dark:bg-black">
       <ConversationContent className="mx-auto w-full max-w-3xl px-0 py-8">
         {messages.length === 0 ? (
           /* 空状态引导区 */
@@ -644,7 +721,7 @@ export function ChatMessages({
                 const isCopied = copiedId === message.id;
 
                 return (
-                  <div key={message.id} className="group/user flex flex-col items-end w-full">
+                  <div key={message.id} data-message-id={message.id} className="group/user flex flex-col items-end w-full">
                     {isEditing ? (
                       /* 内联编辑模式：与提示词输入框风格统一，重新发送按钮完全一致 */
                       <div className="w-full max-w-[85%] rounded-2xl border border-zinc-700/80 bg-zinc-900 p-3.5 shadow-xl">
@@ -770,12 +847,16 @@ export function ChatMessages({
               // 已被时间线收下的说明（含运行中、工具之后的中间返回）不在外面再画一份 Markdown。
               const isReasoningStreaming = message.reasoningStreaming === true;
               const hasSubstantialContent = Boolean(message.content && message.content.trim().length > 0);
+              // 尚未判定归属的短流式文本暂不渲染到正文，杜绝先闪进正文区再跳回时间线的抖动
+              const isPendingText = pendingMessageIds.has(message.id);
               // 外部正文展示防跳动规则：
               // 1. 绝对不能在时间线内（非过程消息）
               // 2. 思考不能正在流式输出
               // 3. 必须已有实质内容，禁止在空内容或思考刚结束时抢跑弹出外漏
+              // 4. 归属未定的短流式文本先等一等
               const shouldShowMessageContent =
                 !messageIsInTimeline &&
+                !isPendingText &&
                 !isReasoningStreaming &&
                 hasSubstantialContent;
               const turnAnswer = answerByHost.get(message.id);
@@ -791,7 +872,7 @@ export function ChatMessages({
               }
 
               return (
-                <div key={message.id} className="flex flex-col w-full text-zinc-100 space-y-3">
+                <div key={message.id} data-message-id={message.id} className="flex flex-col w-full text-zinc-100 space-y-3">
                   {/* 过程时间线固定在本轮第一条助手消息上，工具按出现顺序往下追加。 */}
                   {hasProcessSection && (
                   <ProcessActivityGroup
@@ -880,6 +961,13 @@ export function ChatMessages({
       </ConversationContent>
       <ConversationScrollButton />
       <ImagePreviewDialog file={previewAttachment} onOpenChange={(open) => { if (!open) setPreviewAttachment(null); }} />
-    </Conversation>
+      </Conversation>
+      {/* 回合导航条挂在滚动容器外层，避免绝对定位随内容滚走 */}
+      <ConversationTurnNavigator
+        turns={turns}
+        getScrollElement={getScrollElement}
+        stopScroll={stopStickyScroll}
+      />
+    </div>
   );
 }

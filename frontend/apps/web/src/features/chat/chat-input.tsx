@@ -884,9 +884,10 @@ export function ChatInput({
     <div className="shrink-0 bg-white dark:bg-black px-4 py-4 transition-colors">
       <div className="mx-auto w-full max-w-3xl">
         <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
-          {/* 左侧：工作区选择器 + Git 分支徽标（紧凑并排） */}
+          {/* 左侧：工作区选择器（仅在会话还没发过消息时显示，避免中途切换工作区导致上下文混乱）+ Git 分支徽标 */}
           <div className="flex min-w-0 items-center gap-1.5 flex-wrap">
             {/* 工作区选择器保持在左侧 */}
+            {messages.length === 0 && (
             <div className="relative flex w-fit shrink-0 items-center" ref={workspaceDropdownRef}>
               <button
                 type="button"
@@ -986,6 +987,7 @@ export function ChatInput({
                 </div>
               )}
             </div>
+            )}
 
             {/* Git 分支胶囊（当前工作区关联了 Git 时展示，无 Git 时不展示） */}
             {gitStatus?.isGitRepo ? (
