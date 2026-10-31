@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageResponse } from "../../components/ai-elements/message.js";
 import { cn } from "../../lib/utils.js";
 import {
+  BrainIcon,
   BrainCircuitIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
@@ -432,7 +433,7 @@ function ReasoningActivity({
           onToggle={(event) => setOpen(event.currentTarget.open)}
         >
           <summary className="flex w-full cursor-pointer list-none items-center gap-2 text-[13px] text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">
-            <BrainCircuitIcon className="size-[18px] w-[18px] shrink-0 text-[var(--color-text-muted)]" />
+            <BrainIcon className="size-4 shrink-0 text-[var(--color-text-muted)]" />
             <span className="animated-gradient-text shrink-0 font-medium">正在思考</span>
             <ChevronRightIcon
               className={cn(
@@ -454,7 +455,7 @@ function ReasoningActivity({
         onToggle={(event) => setOpen(event.currentTarget.open)}
       >
         <summary className="flex w-full cursor-pointer list-none items-center gap-2 text-[13px] text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">
-          <BrainCircuitIcon className="size-[18px] w-[18px] shrink-0 text-[var(--color-text-muted)]" />
+          <BrainIcon className="size-4 shrink-0 text-[var(--color-text-muted)]" />
           {shimmerActive ? (
             <span className="animated-gradient-text shrink-0 font-medium">正在思考</span>
           ) : (

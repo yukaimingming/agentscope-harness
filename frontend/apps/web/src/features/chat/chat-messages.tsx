@@ -493,6 +493,38 @@ function formatMessageTime(createdAt?: number): string {
   return `${hours}:${minutes}`;
 }
 
+/** 格式化回合完整日期时间（例如：2026年10月28日 10:12） */
+function formatTurnDateTime(createdAt?: number): string {
+  if (!createdAt || typeof createdAt !== "number" || Number.isNaN(createdAt) || createdAt <= 0) {
+    return "";
+  }
+  const d = new Date(createdAt);
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${year}年${month}月${day}日 ${hours}:${minutes}`;
+}
+
+/** 清理 Markdown 语法符号，生成干净自然的回合回复摘要文本 */
+function cleanMarkdownForTurnPreview(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^[ \t]*[-*+>][ \t]+/gm, "")
+    .replace(/:?-{2,}:?/g, " ")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function ChatMessages({
   messages,
   activities,
@@ -569,28 +601,64 @@ export function ChatMessages({
   const getScrollElement = useCallback(() => stickContextRef.current?.scrollRef.current ?? null, []);
   const stopStickyScroll = useCallback(() => stickContextRef.current?.stopScroll(), []);
 
-  // 左侧回合导航条的数据：每个用户消息开启一个回合（对齐 ZCode ConversationTurnNavigator）
-  const turns = useMemo<ConversationTurn[]>(
-    () =>
-      messages
-        .filter((item) => item.role === "user")
-        .map((item) => ({
-          id: item.id,
-          time: formatMessageTime(item.createdAt),
-          preview:
-            item.content
-              .split(/\r?\n/)
-              .find((line) => line.trim())
-              ?.trim()
-              .slice(0, 80) ?? "(图片或文件消息)",
-        })),
-    [messages],
-  );
+  // 左侧回合导航条的数据：每个用户消息开启一个回合，同时聚合本轮助手回复摘要与完整日期时间
+  const turns = useMemo<ConversationTurn[]>(() => {
+    const result: ConversationTurn[] = [];
+    for (let i = 0; i < messages.length; i += 1) {
+      const msg = messages[i];
+      if (!msg || msg.role !== "user") continue;
+
+      const promptLine =
+        msg.content
+          .split(/\r?\n/)
+          .find((line) => line.trim())
+          ?.trim() ?? "(图片或文件消息)";
+
+      const turnAssistantMessages: ChatMessage[] = [];
+      for (let j = i + 1; j < messages.length; j += 1) {
+        const nextMsg = messages[j];
+        if (!nextMsg) continue;
+        if (nextMsg.role === "user") break;
+        if (nextMsg.role === "assistant") {
+          turnAssistantMessages.push(nextMsg);
+        }
+      }
+
+      const finalAssistant =
+        [...turnAssistantMessages]
+          .reverse()
+          .find((m) => !timelineOwnedMessageIds.has(m.id) && m.content.trim().length > 0) ??
+        [...turnAssistantMessages]
+          .reverse()
+          .find((m) => m.content.trim().length > 0);
+
+      let rawReply = finalAssistant?.content ?? "";
+      if (!rawReply.trim()) {
+        const anyReasoning = [...turnAssistantMessages]
+          .reverse()
+          .find((m) => Boolean(m.reasoning && m.reasoning.trim().length > 0));
+        if (anyReasoning?.reasoning) {
+          rawReply = anyReasoning.reasoning;
+        } else if (turnAssistantMessages.some((m) => m.streaming || m.reasoningStreaming)) {
+          rawReply = "正在思考与生成回复中...";
+        }
+      }
+
+      result.push({
+        id: msg.id,
+        time: formatMessageTime(msg.createdAt),
+        dateTime: formatTurnDateTime(msg.createdAt),
+        prompt: promptLine,
+        replyPreview: cleanMarkdownForTurnPreview(rawReply),
+      });
+    }
+    return result;
+  }, [messages, timelineOwnedMessageIds]);
 
   return (
     <div className="relative flex min-h-0 flex-1 @container">
       <Conversation contextRef={stickContextRef} className="min-h-0 flex-1 bg-white dark:bg-black">
-      <ConversationContent className="mx-auto w-full max-w-3xl px-0 py-8">
+      <ConversationContent className="mx-auto w-full max-w-3xl pl-10 pr-4 sm:px-8 py-8">
         {messages.length === 0 ? (
           /* 空状态引导区 */
           <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
@@ -872,7 +940,7 @@ export function ChatMessages({
               }
 
               return (
-                <div key={message.id} data-message-id={message.id} className="flex flex-col w-full text-zinc-100 space-y-3">
+                <div key={message.id} data-message-id={message.id} className="flex flex-col w-full text-zinc-900 dark:text-zinc-100 space-y-3">
                   {/* 过程时间线固定在本轮第一条助手消息上，工具按出现顺序往下追加。 */}
                   {hasProcessSection && (
                   <ProcessActivityGroup

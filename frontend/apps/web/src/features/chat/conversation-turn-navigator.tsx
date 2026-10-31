@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils.js";
 
-/** 对齐 ZCode ConversationTurnNavigator：聊天区左侧的回合导航条，用于快速翻找历史记录。 */
+/** 聊天区左侧的上下文回合时间线导航项 */
 export interface ConversationTurn {
-  /** 回合锚点：该轮用户消息的 id（消息容器上带 data-message-id 供滚动定位）。 */
+  /** 回合锚点：该轮用户消息的 id（消息容器上带 data-message-id 供滚动定位） */
   id: string;
-  /** HH:mm 格式时间（无有效时间戳时为空串）。 */
+  /** HH:mm 格式简短时间 */
   time: string;
-  /** 该轮用户消息的首行预览。 */
-  preview: string;
+  /** 完整日期时间（例如：2026年10月28日 10:12） */
+  dateTime: string;
+  /** 该轮用户提问的首行标题 */
+  prompt: string;
+  /** 该轮助手回答的纯文本摘要预览 */
+  replyPreview: string;
 }
 
 function prefersReducedMotion(): boolean {
@@ -21,14 +25,16 @@ export function ConversationTurnNavigator({
   stopScroll,
 }: {
   turns: ConversationTurn[];
-  /** 取真实滚动元素（use-stick-to-bottom 的 scrollRef）。 */
+  /** 取真实滚动元素（use-stick-to-bottom 的 scrollRef） */
   getScrollElement?: () => HTMLElement | null;
-  /** 解除粘底锁定，让点击跳转不被拉回底部。 */
+  /** 解除粘底锁定，让点击跳转不被拉回底部 */
   stopScroll?: () => void;
 }) {
   const railRef = useRef<HTMLElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [hoveredTurnId, setHoveredTurnId] = useState<string | null>(null);
+  const [previewTop, setPreviewTop] = useState<number>(0);
   // 跳转动画令牌：连续点击时取消上一次动画
   const jumpTokenRef = useRef(0);
 
@@ -42,9 +48,7 @@ export function ConversationTurnNavigator({
     return log.firstElementChild instanceof HTMLElement ? log.firstElementChild : log;
   };
 
-  // 点击：滚动到对应回合。
-  // 注意：use-stick-to-bottom 会吞掉 scrollIntoView / scrollTo 的平滑滚动并强制回底，
-  // 因此先 stopScroll() 解除粘底，再用 rAF 自绘缓动动画逐帧写 scrollTop。
+  // 点击：平滑滚动到对应回合
   const jumpTo = (messageId: string) => {
     const scroller = getScrollContainer();
     const target = scroller?.querySelector(`[data-message-id="${messageId}"]`);
@@ -56,18 +60,17 @@ export function ConversationTurnNavigator({
     const delta = targetTop - from;
     if (Math.abs(delta) < 2) return;
 
-    // 后台标签页中 rAF 会被浏览器暂停，直接跳转即可（无人观看，无需动画）
     if (prefersReducedMotion() || document.hidden) {
       scroller.scrollTop = targetTop;
       return;
     }
 
     const token = ++jumpTokenRef.current;
-    const duration = 480;
+    const duration = 420;
     const start = performance.now();
     const ease = (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
     const step = (now: number): void => {
-      if (token !== jumpTokenRef.current) return; // 已被新的跳转取代
+      if (token !== jumpTokenRef.current) return;
       const t = Math.min(1, (now - start) / duration);
       scroller.scrollTop = from + delta * ease(t);
       if (t < 1) requestAnimationFrame(step);
@@ -105,58 +108,104 @@ export function ConversationTurnNavigator({
     }
   }, [activeId]);
 
-  // 少于两个回合没有导航价值（对齐 ZCode）
-  if (items.length < 2) return null;
+  const handleItemEnter = (turnId: string, buttonEl: HTMLButtonElement) => {
+    const railEl = railRef.current;
+    if (railEl) {
+      const railRect = railEl.getBoundingClientRect();
+      const btnRect = buttonEl.getBoundingClientRect();
+      const rawCenterY = btnRect.top - railRect.top + btnRect.height / 2;
+      const clampedY = Math.max(72, Math.min(Math.max(72, railRect.height - 72), rawCenterY));
+      setPreviewTop(clampedY);
+    }
+    setHoveredTurnId(turnId);
+  };
+
+  if (items.length === 0) return null;
+
+  const hoveredIndex = hoveredTurnId ? items.findIndex((t) => t.id === hoveredTurnId) : -1;
+  const hoveredTurn = hoveredIndex >= 0 ? items[hoveredIndex] : null;
 
   return (
     <nav
       ref={railRef}
       aria-label="会话回合导航"
-      className="pointer-events-none absolute inset-y-0 left-1.5 z-20 hidden w-8 flex-col @[900px]:flex"
+      data-testid="conversation-turn-navigator"
+      onMouseLeave={() => setHoveredTurnId(null)}
+      className="pointer-events-none absolute inset-y-0 left-2 z-30 flex w-7 flex-col select-none"
     >
-      {/* flex 容器 + margin-auto：垂直居中，内容溢出时自动退化为顶对齐，保证长列表可滚到头 */}
-      <div className="pointer-events-auto m-auto flex max-h-[calc(100%-1.5rem)] w-full flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {items.map((turn) => {
+      {/* 垂直居中的回合刻度槽，内部可独立滚动 */}
+      <div className="pointer-events-auto m-auto flex max-h-[calc(100%-2rem)] w-full flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {items.map((turn, idx) => {
           const isActive = activeId === turn.id;
+          const isHovered = hoveredTurnId === turn.id;
           return (
             <button
               key={turn.id}
               ref={isActive ? activeRef : undefined}
               type="button"
+              data-testid={`turn-nav-item-${idx}`}
               aria-current={isActive ? "location" : undefined}
-              aria-label={`${turn.time ? `${turn.time} ` : ""}${turn.preview}`}
+              aria-label={`第 ${idx + 1} 回合：${turn.prompt}`}
               onClick={() => jumpTo(turn.id)}
-              className="group/nav-item relative flex h-3 w-6 shrink-0 items-center justify-center rounded outline-none focus-visible:ring-1 focus-visible:ring-blue-500 cursor-pointer"
+              onMouseEnter={(e) => handleItemEnter(turn.id, e.currentTarget)}
+              onFocus={(e) => handleItemEnter(turn.id, e.currentTarget)}
+              onBlur={() => setHoveredTurnId((prev) => (prev === turn.id ? null : prev))}
+              className="group/nav-item relative flex h-3.5 w-6 shrink-0 items-center justify-center rounded outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:focus-visible:ring-zinc-500 cursor-pointer"
             >
-              {/* 悬停预览：回合时间 + 用户消息首行（导航条在左侧，预览向右弹出） */}
+              {/* 回合横条：白色主题下采用黑色高清晰度展示，深色主题下采用纯白/浅灰展示 */}
               <span
                 className={cn(
-                  "pointer-events-none absolute left-full top-1/2 z-30 ml-1.5 hidden max-w-[300px] -translate-y-1/2 items-center gap-1.5 truncate rounded-md border px-2 py-1 text-left text-[11px] leading-snug shadow-lg",
-                  "border-zinc-200 bg-white text-zinc-800",
-                  "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100",
-                  "group-hover/nav-item:flex",
-                )}
-              >
-                {turn.time && (
-                  <span className="shrink-0 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-                    {turn.time}
-                  </span>
-                )}
-                <span className="truncate">{turn.preview}</span>
-              </span>
-              {/* 回合横条：紧凑间距，悬停拉长，当前回合高亮 */}
-              <span
-                className={cn(
-                  "block h-0.5 w-2.5 origin-center rounded-full transition-all duration-150",
-                  isActive
-                    ? "w-3.5 bg-zinc-800 dark:bg-zinc-100"
-                    : "bg-zinc-300 group-hover/nav-item:w-3.5 group-hover/nav-item:bg-zinc-500 dark:bg-zinc-600 dark:group-hover/nav-item:bg-zinc-400",
+                  "turn-navigator-tick block h-[2.5px] rounded-full transition-all duration-150",
+                  isActive || isHovered
+                    ? "turn-navigator-tick-active w-4 shadow-sm"
+                    : "turn-navigator-tick-inactive w-2.5",
                 )}
               />
             </button>
           );
         })}
       </div>
+
+      {/* 悬停内容预览卡片：挂载在 overflow-x-hidden 容器外层，避免被裁剪，向右弹出 */}
+      {hoveredTurn && (
+        <div
+          role="tooltip"
+          data-testid="turn-navigator-preview-card"
+          style={{ top: `${previewTop}px` }}
+          className={cn(
+            "turn-navigator-preview-card pointer-events-none absolute left-full z-50 ml-2.5 w-[300px] sm:w-[340px] -translate-y-1/2 rounded-2xl border px-4 py-3.5 text-left transition-all duration-150 animate-in fade-in zoom-in-95",
+            "bg-[#1c1c1f] border-zinc-800/90 text-zinc-100 shadow-[0_16px_36px_rgba(0,0,0,0.55)]",
+          )}
+        >
+          {/* 1. 顶部：用户消息标题 */}
+          <div className="turn-preview-title truncate text-[14px] font-semibold leading-snug text-white mb-1.5">
+            {hoveredTurn.prompt}
+          </div>
+
+          {/* 2. 中部：助手回复内容摘要（最多 3 行截断） */}
+          {hoveredTurn.replyPreview ? (
+            <div className="turn-preview-body line-clamp-3 break-words text-[12.5px] leading-[1.6] text-zinc-300 mb-3">
+              {hoveredTurn.replyPreview}
+            </div>
+          ) : (
+            <div className="turn-preview-body text-[12.5px] leading-[1.6] text-zinc-500 mb-3">
+              暂无回复内容
+            </div>
+          )}
+
+          {/* 3. 底部：左侧回合进度 (如 23 of 23) + 右侧完整日期时间 (如 2026年10月28日 10:12) */}
+          <div className="turn-preview-footer flex items-center justify-between gap-3 text-[12px] font-medium leading-none text-zinc-400">
+            <span className="tabular-nums font-semibold text-zinc-200">
+              {hoveredIndex + 1} of {items.length}
+            </span>
+            {hoveredTurn.dateTime && (
+              <span className="tabular-nums font-medium text-zinc-400">
+                {hoveredTurn.dateTime}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </nav>
   );
 }

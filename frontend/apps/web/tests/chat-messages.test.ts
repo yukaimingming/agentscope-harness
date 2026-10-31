@@ -616,3 +616,49 @@ describe("多轮对话文件 Diff 差异卡片轮次隔离", () => {
     expect(html.split("个文件变更").length - 1).toBe(2);
   });
 });
+
+describe("左侧上下文时间线导航与内容预览 (ConversationTurnNavigator)", () => {
+  it("空会话时不渲染上下文时间线", () => {
+    const html = renderToStaticMarkup(
+      createElement(ChatMessages, {
+        messages: [],
+        activities: [],
+        error: null,
+      })
+    );
+    expect(html).not.toContain('data-testid="conversation-turn-navigator"');
+  });
+
+  it("存在用户消息时渲染左侧上下文时间线刻度与消息锚点，具备完整日期与预览", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "u-1",
+        role: "user",
+        content: "帮我把代码提交一下，不要改东西",
+        createdAt: new Date(2026, 9, 28, 10, 12).getTime(),
+        streaming: false,
+      },
+      {
+        id: "a-1",
+        role: "assistant",
+        content: "已为您完成代码提交与推送，严格遵循要求未做任何代码改动： 提交详情 提交 Commit: 0059aef 提交信息: feat: 优化工作区选择器发出对话后隐...",
+        runId: "run-1",
+        createdAt: new Date(2026, 9, 28, 10, 13).getTime(),
+        streaming: false,
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      createElement(ChatMessages, {
+        messages,
+        activities: [],
+        error: null,
+      })
+    );
+
+    expect(html).toContain('data-testid="conversation-turn-navigator"');
+    expect(html).toContain('data-testid="turn-nav-item-0"');
+    expect(html).toContain('data-message-id="u-1"');
+    expect(html).toContain("第 1 回合：帮我把代码提交一下，不要改东西");
+  });
+});

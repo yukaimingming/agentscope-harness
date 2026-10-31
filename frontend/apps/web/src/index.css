@@ -960,3 +960,69 @@ html.light .animated-gradient-text {
   }
 }
 
+/* ================= 上下文回合时间线 (ConversationTurnNavigator) ================= */
+.turn-navigator-tick {
+  border-radius: 9999px;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 白色（浅色）主题下的时间线刻度与悬浮状态 */
+html.light .turn-navigator-tick-inactive {
+  background-color: #a1a1aa !important; /* 清晰、温和的中性灰刻度 */
+}
+html.light .group\/nav-item:hover .turn-navigator-tick-inactive {
+  background-color: #09090b !important; /* 悬浮时变纯黑并展开 */
+  width: 1rem !important;
+}
+html.light .turn-navigator-tick-active {
+  background-color: #09090b !important; /* 激活态绝对纯黑！杜绝被全局 html.light .bg-black 覆盖成白色 */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 黑色（深色）主题下的时间线刻度与悬浮状态 */
+html.dark .turn-navigator-tick-inactive,
+html:not(.light) .turn-navigator-tick-inactive {
+  background-color: #52525b !important; /* 优雅深灰刻度 */
+}
+html.dark .group\/nav-item:hover .turn-navigator-tick-inactive,
+html:not(.light) .group\/nav-item:hover .turn-navigator-tick-inactive {
+  background-color: #ffffff !important;
+  width: 1rem !important;
+}
+html.dark .turn-navigator-tick-active,
+html:not(.light) .turn-navigator-tick-active {
+  background-color: #ffffff !important; /* 亮白高亮 */
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.35) !important;
+}
+
+/* 上下文时间线悬停预览卡片（深色高质感卡片与高对比度文字，对齐用户参考图，跨浅色与深色主题强制生效） */
+html.light .turn-navigator-preview-card,
+html.dark .turn-navigator-preview-card,
+.turn-navigator-preview-card {
+  background-color: #1c1c1f !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+}
+html.light .turn-navigator-preview-card .turn-preview-title,
+html.dark .turn-navigator-preview-card .turn-preview-title,
+.turn-navigator-preview-card .turn-preview-title {
+  color: #ffffff !important;
+}
+html.light .turn-navigator-preview-card .turn-preview-body,
+html.dark .turn-navigator-preview-card .turn-preview-body,
+.turn-navigator-preview-card .turn-preview-body {
+  color: #a1a1aa !important;
+}
+html.light .turn-navigator-preview-card .turn-preview-footer,
+html.dark .turn-navigator-preview-card .turn-preview-footer,
+.turn-navigator-preview-card .turn-preview-footer,
+html.light .turn-navigator-preview-card .turn-preview-footer span,
+html.dark .turn-navigator-preview-card .turn-preview-footer span,
+.turn-navigator-preview-card .turn-preview-footer span {
+  color: #71717a !important;
+}
+html.light .turn-navigator-preview-card .turn-preview-footer span.font-semibold,
+html.dark .turn-navigator-preview-card .turn-preview-footer span.font-semibold,
+.turn-navigator-preview-card .turn-preview-footer span.font-semibold {
+  color: #e4e4e7 !important;
+}
