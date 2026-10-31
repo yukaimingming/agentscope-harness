@@ -52,6 +52,8 @@ interface WorkspaceSidebarProps {
   groupedSessions: FolderGroup[];
   /** 当前激活会话 ID */
   activeSessionId: string;
+  /** 当前分屏（Split View）打开的会话 ID */
+  splitSessionId?: string | null;
   /** 正在后台执行的会话 ID 列表（用于显示运行中指示） */
   runningSessionIds?: string[];
   /** 切换会话 */
@@ -143,6 +145,7 @@ export function WorkspaceSidebar({
   onNewSession,
   groupedSessions,
   activeSessionId,
+  splitSessionId,
   runningSessionIds,
   onSelectSession,
   onRemoveSession,
@@ -230,22 +233,31 @@ export function WorkspaceSidebar({
 
   const renderSession = (session: SessionSummary, bucketLabel?: string) => {
     const isActive = session.id === activeSessionId;
+    const isSplit = session.id === splitSessionId;
     const isSessionRunning = runningSessionIds?.includes(session.id) === true;
     const isEditing = editingSessionId === session.id;
 
     return (
       <div
         key={session.id}
+        draggable={!isEditing}
+        onDragStart={(event) => {
+          event.dataTransfer.setData("application/x-deepagent-session", session.id);
+          event.dataTransfer.setData("text/plain", session.id);
+          event.dataTransfer.effectAllowed = "copyMove";
+        }}
         onClick={() => {
           if (!isEditing) onSelectSession(session.id);
         }}
-        className={`group/session sidebar-session-item relative flex items-center justify-between rounded-md px-2.5 py-1.5 text-[13px] cursor-pointer transition-colors ${
-          isActive
+        className={`group/session sidebar-session-item relative flex items-center justify-between rounded-md px-2.5 py-1.5 text-[13px] cursor-grab active:cursor-grabbing transition-colors ${
+          isActive || isSplit
             ? "bg-zinc-800 text-white font-medium shadow-xs border-l-2 border-zinc-200 pl-2"
             : "text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100"
         }`}
         data-active={isActive ? "true" : "false"}
+        data-split={isSplit ? "true" : "false"}
         data-session-id={session.id}
+        title="点击切换会话，或按住拖拽分屏并排显示"
       >
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {isSessionRunning ? (
@@ -255,7 +267,7 @@ export function WorkspaceSidebar({
           ) : (
             <MessageSquareIcon
               className={`size-3.5 shrink-0 transition-colors ${
-                isActive ? "text-zinc-200" : "text-zinc-500 group-hover/session:text-zinc-300"
+                isActive || isSplit ? "text-zinc-200" : "text-zinc-500 group-hover/session:text-zinc-300"
               }`}
             />
           )}

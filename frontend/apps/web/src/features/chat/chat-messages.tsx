@@ -35,11 +35,11 @@ import { ConversationTurnNavigator, type ConversationTurn } from "./conversation
 import { DiffCard, type FileChangeSummary, type FileRevision } from "./diff-card.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
 import { ApprovalCard } from "./approval-card.js";
+import { BloubBot } from "./bloub-bot.js";
 import {
   CopyIcon,
   CheckIcon,
   RotateCcwIcon,
-  SparklesIcon,
   ArrowRightIcon,
   PencilIcon,
   CornerDownLeftIcon,
@@ -661,9 +661,9 @@ export function ChatMessages({
       <ConversationContent className="mx-auto w-full max-w-3xl pl-10 pr-4 sm:px-8 py-8">
         {messages.length === 0 ? (
           /* 空状态引导区 */
-          <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
-            <div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-300 shadow-inner">
-              <SparklesIcon className="size-6 text-zinc-100" />
+          <div className="flex h-full min-h-[360px] flex-col items-center justify-center-safe text-center">
+            <div className="mb-4">
+              <BloubBot size={88} />
             </div>
             {(() => {
               const hour = new Date().getHours();

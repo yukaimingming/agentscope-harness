@@ -11,7 +11,6 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  type Activity,
   availableEffortsForModel,
   resolveEffortForModel,
   DEFAULT_PERMISSION_MODE,
@@ -20,18 +19,16 @@ import {
   type ReasoningEffort,
 } from "@deepagent/shared";
 import { useAgentClient } from "./features/chat/use-agent-client.js";
-import { ChatMessages } from "./features/chat/chat-messages.js";
 import type { ClientState } from "./features/chat/client-reducer.js";
-import { ChatInput } from "./features/chat/chat-input.js";
 import type { ChatAttachment } from "./features/chat/chat-attachments.js";
 import { WorkspaceSidebar } from "./features/chat/workspace-sidebar.js";
-import { ApprovalCard } from "./features/chat/approval-card.js";
+import { ChatPane } from "./features/chat/chat-pane.js";
+import { SplitChatView } from "./features/chat/split-chat-view.js";
 import { SettingsModal } from "./features/settings/settings-modal.js";
 import { useProviderSettings } from "./features/settings/use-provider-settings.js";
 import { useTheme } from "./features/settings/use-theme.js";
 import { useSessions, normalizePath, type SessionSummary } from "./features/chat/use-sessions.js";
 import { FolderPickerModal } from "./features/chat/folder-picker-modal.js";
-import { PanelLeftIcon, AlertCircleIcon, PanelRightIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { ReviewSidebar } from "./features/review/review-sidebar.js";
 
 /** AG-UI 服务端地址：走代理或直接连接。 */
@@ -48,7 +45,9 @@ export function App() {
     runningThreadIds,
     allStates,
     send,
+    sendToThread,
     stop,
+    stopThread,
     submitDecisions,
     newThread,
     setActiveThread,
@@ -60,16 +59,51 @@ export function App() {
     clearThread,
   } = useAgentClient(AGENT_URL);
 
+  // Split View 分屏状态管理：右侧分屏会话 ID 与左右比例（移植自 langchain 项目）
+  const [splitSessionId, setSplitSessionId] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem("agentscope_split_session_id");
+      return saved && saved.trim() ? saved : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("agentscope_split_ratio");
+      if (saved) {
+        const val = Number(saved);
+        if (!Number.isNaN(val) && val >= 0.25 && val <= 0.75) return val;
+      }
+    } catch {
+      // 忽略
+    }
+    return 0.5;
+  });
+
+  useEffect(() => {
+    try {
+      if (splitSessionId) {
+        localStorage.setItem("agentscope_split_session_id", splitSessionId);
+      } else {
+        localStorage.removeItem("agentscope_split_session_id");
+      }
+    } catch {
+      // 忽略
+    }
+  }, [splitSessionId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("agentscope_split_ratio", String(splitRatio));
+    } catch {
+      // 忽略
+    }
+  }, [splitRatio]);
+
   // 当前会话是否已有聊天内容：新对话还没有内容时，右侧代码审查边栏强制隐藏
   const hasChatContent = state.messages.length > 0 || state.activities.length > 0;
-
-  const latestTodoActivity = useMemo<Activity | null>(() => {
-    const todos = state.activities.filter((activity) => activity.kind === "todo");
-    return todos.reduce<Activity | null>(
-      (latest, activity) => !latest || activity.startedAt >= latest.startedAt ? activity : latest,
-      null,
-    );
-  }, [state.activities]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -331,24 +365,41 @@ export function App() {
   // 未配置厂商拦截警告状态
   const [providerWarning, setProviderWarning] = useState<string | null>(null);
 
+  // 右侧分屏窗格独立的发送拦截警告状态
+  const [rightProviderWarning, setRightProviderWarning] = useState<string | null>(null);
+
   useEffect(() => {
     if (canSend && providerWarning) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 厂商配置就绪后同步清除陈旧的发送拦截警告
       setProviderWarning(null);
     }
   }, [canSend, providerWarning]);
+
+  useEffect(() => {
+    if (canSend && rightProviderWarning) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 厂商配置就绪后同步清除陈旧的发送拦截警告
+      setRightProviderWarning(null);
+    }
+  }, [canSend, rightProviderWarning]);
+
+  /** 构造未配置厂商/模型时的发送拦截警告文案（左右窗格共用）。 */
+  const buildProviderWarning = useCallback(
+    (blockedReason?: string): string =>
+      !settings.activeProvider
+        ? "当前尚未配置任何大模型 API 提供商，无法发送消息并调用模型。请先前往「设置」配置 API 厂商与密钥。"
+        : !settings.activeProvider.hasApiKey
+          ? "当前大模型厂商尚未填写 API Key，无法与模型建立连接。请先前往「设置」补充 API Key。"
+          : currentModelId === null
+            ? "当前大模型厂商未选择可用模型，请先前往「设置」刷新并选择模型。"
+            : (blockedReason || "当前模型配置未就绪，无法发送消息。"),
+    [settings.activeProvider, currentModelId],
+  );
 
   // 发送消息
   const handleSend = useCallback(
     (content: string, attachments: ChatAttachment[] = []): void => {
       if (!canSend) {
-        const warningReason = !settings.activeProvider
-          ? "当前尚未配置任何大模型 API 提供商，无法发送消息并调用模型。请先前往「设置」配置 API 厂商与密钥。"
-          : !settings.activeProvider.hasApiKey
-            ? "当前大模型厂商尚未填写 API Key，无法与模型建立连接。请先前往「设置」补充 API Key。"
-            : currentModelId === null
-              ? "当前大模型厂商未选择可用模型，请先前往「设置」刷新并选择模型。"
-              : "当前模型配置未就绪，无法发送消息。";
-        setProviderWarning(warningReason);
+        setProviderWarning(buildProviderWarning());
         return;
       }
       setProviderWarning(null);
@@ -360,7 +411,7 @@ export function App() {
         permissionMode,
       }, attachments);
     },
-    [canSend, send, settings.activeProvider, settings.activeProviderId, currentModelId, effortResolution.effort, workspaceRoot, permissionMode],
+    [canSend, send, buildProviderWarning, settings.activeProviderId, currentModelId, effortResolution.effort, workspaceRoot, permissionMode],
   );
 
   // 新建会话
@@ -433,6 +484,10 @@ export function App() {
   // 切换会话
   const handleSelectSession = async (id: string) => {
     if (id === state.threadId && state.messages.length > 0) return;
+    // 若点击的正好是右侧分屏的会话，关闭右侧分屏，主屏切换至该会话
+    if (id === splitSessionId) {
+      setSplitSessionId(null);
+    }
     const sessionWorkspace = sessionsRef.current.find((s) => s.id === id)?.workspaceRoot;
     setWorkspaceRoot(sessionWorkspace ? sessionWorkspace : null);
 
@@ -523,25 +578,216 @@ export function App() {
     [rollbackBeforeMessage, handleSend],
   );
 
+  // ===== Split View 分屏（移植自 langchain 项目 0bd92e5/b8799de）=====
+
+  // 打开分屏会话（从侧边栏拖拽到主视图右半侧或窗格内触发）
+  const handleOpenSplitWithSession = useCallback(
+    async (id: string) => {
+      if (id === state.threadId) return; // 不与主屏相同会话分屏
+      if (!hasThread(id)) {
+        let saved = sessionsManager.loadSessionState(id);
+        if (!saved) {
+          try {
+            const response = await fetch(`/api/workbench/sessions/${encodeURIComponent(id)}`);
+            if (response.ok) {
+              saved = ((await response.json()) as { state?: ClientState }).state ?? null;
+              if (saved) cacheRemoteSessionState(id, saved);
+            }
+          } catch {
+            // 忽略
+          }
+        }
+        if (saved) {
+          loadState(saved, false); // activate=false，保持左侧主屏不被打乱
+        } else {
+          newThread(id);
+        }
+      }
+      setSplitSessionId(id);
+    },
+    [state.threadId, hasThread, sessionsManager, cacheRemoteSessionState, loadState, newThread],
+  );
+
+  // 若分屏展示的会话在列表中已被删除，则右屏自动回退为 null（派生状态，避免在 effect 中触发 cascading render）
+  const activeSplitSessionId = useMemo(() => {
+    if (!splitSessionId) return null;
+    if (sessions.length > 0 && !sessions.some((s) => s.id === splitSessionId)) {
+      return null;
+    }
+    return splitSessionId;
+  }, [splitSessionId, sessions]);
+
+  // 关闭左侧窗格：右侧窗格的内容成为唯一的全屏窗格（关闭左边就显示右边）
+  const handleCloseLeftPane = useCallback(() => {
+    if (!activeSplitSessionId) return;
+    const targetSessionId = activeSplitSessionId;
+    setActiveThread(targetSessionId);
+    sessionsManager.setActiveSessionId(targetSessionId);
+    setSplitSessionId(null);
+  }, [activeSplitSessionId, setActiveThread, sessionsManager]);
+
+  // 关闭右侧窗格：左侧窗格成为唯一的全屏窗格（关闭右边就显示左边）
+  const handleCloseRightPane = useCallback(() => {
+    setSplitSessionId(null);
+  }, []);
+
+  // 左右分屏面板位置互换
+  const handleSwapPanes = useCallback(() => {
+    if (!splitSessionId) return;
+    const oldLeft = state.threadId;
+    const oldRight = splitSessionId;
+    setActiveThread(oldRight);
+    sessionsManager.setActiveSessionId(oldRight);
+    setSplitSessionId(oldLeft);
+  }, [splitSessionId, state.threadId, setActiveThread, sessionsManager]);
+
+  // 右屏状态与标题
+  const rightState = activeSplitSessionId ? allStates[activeSplitSessionId] : undefined;
+  const isRightRunning = activeSplitSessionId ? runningThreadIds.includes(activeSplitSessionId) : false;
+  const rightSession = activeSplitSessionId ? sessions.find((s) => s.id === activeSplitSessionId) : undefined;
+  const rightTitle = rightSession?.title || "分屏会话";
+  const rightWorkspace = rightSession?.workspaceRoot ?? workspaceRoot;
+
+  // 右屏发送（带与左屏一致的未配置厂商拦截警告）
+  const handleSendRight = useCallback(
+    (content: string, attachments: ChatAttachment[] = []): void => {
+      if (!activeSplitSessionId) return;
+      if (!canSend) {
+        setRightProviderWarning(buildProviderWarning());
+        return;
+      }
+      setRightProviderWarning(null);
+      void sendToThread(
+        activeSplitSessionId,
+        content,
+        {
+          providerId: settings.activeProviderId ?? undefined,
+          modelId: currentModelId ?? undefined,
+          effort: effortResolution.effort,
+          workspaceRoot: rightWorkspace ?? undefined,
+          permissionMode,
+        },
+        attachments,
+      );
+    },
+    [activeSplitSessionId, canSend, buildProviderWarning, sendToThread, settings.activeProviderId, currentModelId, effortResolution.effort, rightWorkspace, permissionMode],
+  );
+
+  const handleStopRight = useCallback(() => {
+    if (activeSplitSessionId) void stopThread(activeSplitSessionId);
+  }, [activeSplitSessionId, stopThread]);
+
+  const handleRetryRight = useCallback(
+    (messageId: string): void => {
+      if (!activeSplitSessionId) return;
+      const tState = allStates[activeSplitSessionId];
+      if (!tState) return;
+      const index = tState.messages.findIndex((m) => m.id === messageId);
+      if (index <= 0) return;
+      const userMessage = [...tState.messages.slice(0, index)]
+        .reverse()
+        .find((m) => m.role === "user");
+      if (!userMessage) return;
+      // 必须连同用户消息一起回退（与左屏 handleRetry 一致），避免提示词重复显示。
+      rollbackBeforeMessage(userMessage.id, activeSplitSessionId);
+      handleSendRight(userMessage.content, userMessage.attachments);
+    },
+    [activeSplitSessionId, allStates, rollbackBeforeMessage, handleSendRight],
+  );
+
+  const handleEditMessageRight = useCallback(
+    (messageId: string, newContent: string, attachments: ChatAttachment[] = []): void => {
+      if (!activeSplitSessionId) return;
+      rollbackBeforeMessage(messageId, activeSplitSessionId);
+      handleSendRight(newContent, attachments);
+    },
+    [activeSplitSessionId, rollbackBeforeMessage, handleSendRight],
+  );
+
+  // 右屏人工审批操作
+  const handleDecideRight = useCallback(
+    (activityId: string, decision: "approve" | "reject"): void => {
+      if (!activeSplitSessionId) return;
+      const interruptId = activityId.split(":")[1];
+      if (interruptId) {
+        setDecision(
+          interruptId,
+          {
+            type: decision,
+            message: decision === "reject" ? "用户拒绝了该操作。" : undefined,
+          },
+          activeSplitSessionId,
+        );
+        setTimeout(() => {
+          void submitDecisions(
+            {
+              providerId: settings.activeProviderId ?? undefined,
+              modelId: currentModelId ?? undefined,
+              effort: effortResolution.effort,
+              workspaceRoot: rightWorkspace ?? undefined,
+              permissionMode,
+            },
+            activeSplitSessionId,
+          );
+        }, 60);
+      }
+    },
+    [activeSplitSessionId, setDecision, submitDecisions, settings.activeProviderId, currentModelId, effortResolution.effort, rightWorkspace, permissionMode],
+  );
+
+  const handleSubmitDecisionsRight = useCallback((): void => {
+    if (!activeSplitSessionId) return;
+    void submitDecisions(
+      {
+        providerId: settings.activeProviderId ?? undefined,
+        modelId: currentModelId ?? undefined,
+        effort: effortResolution.effort,
+        workspaceRoot: rightWorkspace ?? undefined,
+        permissionMode,
+      },
+      activeSplitSessionId,
+    );
+  }, [activeSplitSessionId, submitDecisions, settings.activeProviderId, currentModelId, effortResolution.effort, rightWorkspace, permissionMode]);
+
+  // 上次关闭前若有分屏会话，启动恢复完成后自动重新拉起右屏（线程不在内存时后台载入，不打乱主屏）。
+  useEffect(() => {
+    if (!workbenchReady) return;
+    if (!splitSessionId) return;
+    const sessionExists = sessions.some((s) => s.id === splitSessionId);
+    if (splitSessionId === state.threadId || (sessions.length > 0 && !sessionExists)) {
+      // 分屏会话已不存在或与主屏相同：分屏状态作废。
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 启动恢复完成后一次性校正持久化的分屏状态
+      setSplitSessionId(null);
+      return;
+    }
+    if (allStates[splitSessionId]) return; // 已在内存中，SplitChatView 可直接渲染
+    void handleOpenSplitWithSession(splitSessionId);
+    // 仅在启动恢复完成时执行一次，避免会话列表变化时重复拉起。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workbenchReady]);
+
   useEffect(() => {
     (window as unknown as { __deepagentTestHooks?: unknown }).__deepagentTestHooks = {
       getState: () => state,
+      getSplitState: () => (activeSplitSessionId ? allStates[activeSplitSessionId] : null),
+      getSplitSessionId: () => activeSplitSessionId,
       loadState,
       handleSend,
+      handleSendRight,
       handleEditMessage,
       handleNewSession,
       handleSubmitDecisions,
+      handleOpenSplitWithSession,
+      handleCloseSplit: handleCloseRightPane,
+      handleCloseLeftPane,
+      handleCloseRightPane,
+      handleSwapPanes,
       sessionsManager,
     };
     // handleSubmitDecisions 依赖 settings/effortResolution 等渲染期值，
     // 每次渲染都是新引用；这里刻意只按状态键重挂载，避免钩子频繁重建。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, loadState, handleSend, handleEditMessage, handleNewSession, sessionsManager]);
-
-  const pendingInterrupts = state.run.interrupts;
-  const hasDecisions =
-    pendingInterrupts.length > 0 &&
-    pendingInterrupts.every((interrupt) => Boolean(state.pendingDecisions[interrupt.id]));
+  }, [state, activeSplitSessionId, allStates, loadState, handleSend, handleSendRight, handleEditMessage, handleNewSession, sessionsManager]);
 
   const currentSession = sessions.find((s) => s.id === state.threadId);
   const currentTitle = currentSession?.title || "新对话";
@@ -558,6 +804,7 @@ export function App() {
         sessions={sessions}
         groupedSessions={groupedSessions}
         activeSessionId={state.threadId}
+        splitSessionId={activeSplitSessionId}
         runningSessionIds={runningThreadIds}
         onSelectSession={handleSelectSession}
         onRenameSession={renameSession}
@@ -567,6 +814,9 @@ export function App() {
           void fetch(`/api/workbench/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
         }}
         onRemoveSession={(id) => {
+          if (id === activeSplitSessionId) {
+            setSplitSessionId(null);
+          }
           removeSession(id);
           void fetch(`/api/workbench/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
           // 释放该会话的运行时（会中止其后台运行并切换到其它可用会话）。
@@ -580,192 +830,34 @@ export function App() {
         onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
       />
 
-      {/* 右侧主聊天区 */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-black">
-        {/* 顶部 Header：极致极简，去掉右上角设置等杂项 */}
-        <header className="flex h-12 shrink-0 items-center justify-between px-4 border-b border-zinc-200/80 dark:border-zinc-800/40 bg-white dark:bg-black">
-          <div className="flex items-center gap-2.5 min-w-0">
-            {!isSidebarOpen && (
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                title="展开侧边栏"
-                aria-label="展开侧边栏"
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
-              >
-                <PanelLeftIcon className="size-4" />
-              </button>
-            )}
-
-            <h1 className="truncate text-[13px] font-medium text-zinc-300" title={currentTitle}>
-              {currentTitle}
-            </h1>
-          </div>
-
-          {/* 右上角仅保留代码审查(Review)边栏开关：新对话还没有聊天内容时不展示入口 */}
-          <div className="flex items-center gap-1.5">
-            {hasChatContent && (
-            <button
-              type="button"
-              onClick={toggleReview}
-              title={isReviewOpen ? "收起代码审查侧边栏" : "展开代码审查侧边栏 (Review)"}
-              aria-label="代码审查"
-              className={`rounded p-1 transition-colors ${
-                isReviewOpen
-                  ? "bg-zinc-800 text-white"
-                  : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
-              }`}
-            >
-              <PanelRightIcon className="size-4" />
-            </button>
-            )}
-          </div>
-        </header>
-
-        {/* 聊天消息区 */}
-        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-black">
-          <ChatMessages
-            messages={state.messages}
-            activities={state.activities}
-            error={state.run.error}
-            isRunning={isRunning}
-            runSnapshot={state.run}
-            onRetry={handleRetry}
-            onEditMessage={handleEditMessage}
-            onQuickPrompt={handleSend}
-          />
-
-          {/* 人工审批通知栏 */}
-          {pendingInterrupts.length > 0 ? (
-            <div className="shrink-0 border-t border-border bg-card px-4 py-3">
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-                <div className="max-h-[min(32vh,20rem)] space-y-2 overflow-y-auto">
-                  {pendingInterrupts.map((interrupt) => {
-                    const activity = state.activities.find(
-                      (item) => item.kind === "approval" && item.id === `approval:${interrupt.id}`,
-                    );
-                    if (!activity) return null;
-                    const selectedDecision = state.pendingDecisions[interrupt.id]?.type;
-                    const decision =
-                      selectedDecision === "approve" || selectedDecision === "reject"
-                        ? selectedDecision
-                        : undefined;
-                    return (
-                      <ApprovalCard
-                        key={interrupt.id}
-                        activity={activity}
-                        decision={decision}
-                        onDecide={handleDecide}
-                      />
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2 text-foreground text-[12.5px] font-medium">
-                    <AlertCircleIcon className="size-4 shrink-0 text-muted-foreground" />
-                    <span>
-                      需人工确认：{pendingInterrupts.length} 项操作
-                      {hasDecisions ? "（已就绪）" : ""}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleSubmitDecisions}
-                    disabled={!hasDecisions || isRunning}
-                    title={
-                      isRunning
-                        ? "正在运行中"
-                        : hasDecisions
-                          ? "按已选择的决策恢复执行（未选择的将按批准处理）"
-                          : "请先在审批卡片中点击「批准」或「拒绝」"
-                    }
-                    className="rounded-md bg-foreground text-background hover:bg-foreground/90 px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    继续执行
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {/* 未配置厂商或未填 Key 拦截警告提示 */}
-          {providerWarning && (
-            <div className="mx-auto w-full max-w-3xl px-4 pb-2 transition-all animate-in fade-in slide-in-from-bottom-2 duration-200">
-              <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3.5 text-amber-200 shadow-xl backdrop-blur-md">
-                <div className="flex items-start gap-2.5">
-                  <TriangleAlertIcon className="size-5 shrink-0 text-amber-400 mt-0.5" />
-                  <div className="space-y-1">
-                    <div className="text-[13px] font-semibold text-amber-300 flex items-center gap-1.5">
-                      <span>发送拦截警告</span>
-                      <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        未配置可用 API 厂商
-                      </span>
-                    </div>
-                    <div className="text-[12.5px] text-amber-200/90 leading-relaxed">
-                      {providerWarning}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSettingsOpen(true);
-                      setProviderWarning(null);
-                    }}
-                    className="rounded-lg bg-amber-500 hover:bg-amber-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors shadow-sm cursor-pointer"
-                  >
-                    前往配置厂商
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProviderWarning(null)}
-                    className="rounded-lg p-1.5 text-amber-400/80 hover:text-amber-200 hover:bg-amber-500/20 transition-colors cursor-pointer"
-                    title="关闭提醒"
-                  >
-                    <XIcon className="size-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 底部输入框（支持输入框上方对齐的工作区下拉选择、模型下拉选择与思考等级） */}
-          <ChatInput
-            todoActivity={latestTodoActivity}
-            onOpenGitReview={toggleReview}
-            onSend={handleSend}
-            onStop={() => void stop()}
+      {/* Split View 分屏与主聊天视图（移植自 langchain 项目） */}
+      <SplitChatView
+        isSplit={Boolean(activeSplitSessionId && rightState)}
+        splitRatio={splitRatio}
+        onSplitRatioChange={setSplitRatio}
+        onOpenSplitWithSession={handleOpenSplitWithSession}
+        leftPane={
+          <ChatPane
+            paneId="left"
+            isSplit={Boolean(activeSplitSessionId && rightState)}
+            sessionId={state.threadId}
+            sessionTitle={currentTitle}
+            state={state}
             isRunning={isRunning}
             effort={effortResolution.effort}
-            onEffortChange={(value: ReasoningEffort) => settings.setEffort(value)}
             supportedEfforts={effortResolution.supported}
             reasoningUnsupported={reasoningUnsupported}
             fallbackApplied={effortResolution.fallbackApplied}
             requestedEffort={settings.effort}
+            onEffortChange={(value: ReasoningEffort) => settings.setEffort(value)}
+            availableModels={allAvailableModels}
+            currentModelId={currentModelId ?? undefined}
+            onSelectModel={(model: string) => settings.setActiveModelId(model)}
             modelStatus={modelStatus}
             modelStatusKind={modelStatusKind}
-            disabled={!canSend}
-            onBlockedSend={(reason) => {
-              const warningReason = !settings.activeProvider
-                ? "当前尚未配置任何大模型 API 提供商，无法发送消息并调用模型。请先前往「设置」配置 API 厂商与密钥。"
-                : !settings.activeProvider.hasApiKey
-                  ? "当前大模型厂商尚未填写 API Key，无法与模型建立连接。请先前往「设置」补充 API Key。"
-                  : currentModelId === null
-                    ? "当前大模型厂商未选择可用模型，请先前往「设置」刷新并选择模型。"
-                    : (reason || "当前未配置可用 API 厂商，无法发送消息。");
-              setProviderWarning(warningReason);
-            }}
-            availableModels={allAvailableModels}
-            currentModel={currentModelId}
-            onSelectModel={(model: string) => settings.setActiveModelId(model)}
             permissionMode={permissionMode}
             onPermissionModeChange={setPermissionMode}
-            onOpenSettings={() => setSettingsOpen(true)}
             workspaceRoot={workspaceRoot}
-            messages={state.messages}
-            activities={state.activities}
-            usage={state.run.usage ?? null}
             customWorkspaces={customWorkspaces}
             onSelectWorkspace={(path) => {
               setWorkspaceRoot(path);
@@ -774,9 +866,96 @@ export function App() {
               }
             }}
             onOpenFolderPicker={() => setIsFolderPickerOpen(true)}
+            onOpenSettings={() => setSettingsOpen(true)}
+            canSend={canSend}
+            onSend={handleSend}
+            onStop={() => void stop()}
+            onRetry={handleRetry}
+            onEditMessage={handleEditMessage}
+            onDecide={handleDecide}
+            onSubmitDecisions={handleSubmitDecisions}
+            onCloseSplit={handleCloseLeftPane}
+            onSwapPanes={handleSwapPanes}
+            isSidebarOpen={isSidebarOpen}
+            onToggleSidebar={toggleSidebar}
+            isReviewOpen={isReviewOpen}
+            onToggleReview={toggleReview}
+            onOpenGitReview={toggleReview}
+            onBlockedSend={(reason) => {
+              setProviderWarning(buildProviderWarning(reason));
+            }}
+            providerWarning={providerWarning}
+            onDismissProviderWarning={() => setProviderWarning(null)}
+            onOpenSettingsFromWarning={() => {
+              setSettingsOpen(true);
+              setProviderWarning(null);
+            }}
+            onDropSession={(droppedId) => {
+              if (droppedId !== state.threadId) {
+                void handleOpenSplitWithSession(droppedId);
+              }
+            }}
           />
-        </section>
-      </div>
+        }
+        rightPane={
+          activeSplitSessionId && rightState ? (
+            <ChatPane
+              paneId="right"
+              isSplit={true}
+              sessionId={activeSplitSessionId}
+              sessionTitle={rightTitle}
+              state={rightState}
+              isRunning={isRightRunning}
+              effort={effortResolution.effort}
+              supportedEfforts={effortResolution.supported}
+              reasoningUnsupported={reasoningUnsupported}
+              fallbackApplied={effortResolution.fallbackApplied}
+              requestedEffort={settings.effort}
+              onEffortChange={(value: ReasoningEffort) => settings.setEffort(value)}
+              availableModels={allAvailableModels}
+              currentModelId={currentModelId ?? undefined}
+              onSelectModel={(model: string) => settings.setActiveModelId(model)}
+              modelStatus={modelStatus}
+              modelStatusKind={modelStatusKind}
+              permissionMode={permissionMode}
+              onPermissionModeChange={setPermissionMode}
+              workspaceRoot={rightWorkspace}
+              customWorkspaces={customWorkspaces}
+              onSelectWorkspace={(path) => {
+                if (splitSessionId) {
+                  saveSessionState(splitSessionId, rightState, path ?? "");
+                }
+              }}
+              onOpenFolderPicker={() => setIsFolderPickerOpen(true)}
+              onOpenSettings={() => setSettingsOpen(true)}
+              canSend={canSend}
+              onSend={handleSendRight}
+              onStop={handleStopRight}
+              onRetry={handleRetryRight}
+              onEditMessage={handleEditMessageRight}
+              onDecide={handleDecideRight}
+              onSubmitDecisions={handleSubmitDecisionsRight}
+              onCloseSplit={handleCloseRightPane}
+              onSwapPanes={handleSwapPanes}
+              onOpenGitReview={toggleReview}
+              onBlockedSend={(reason) => {
+                setRightProviderWarning(buildProviderWarning(reason));
+              }}
+              providerWarning={rightProviderWarning}
+              onDismissProviderWarning={() => setRightProviderWarning(null)}
+              onOpenSettingsFromWarning={() => {
+                setSettingsOpen(true);
+                setRightProviderWarning(null);
+              }}
+              onDropSession={(droppedId) => {
+                if (droppedId !== splitSessionId) {
+                  void handleOpenSplitWithSession(droppedId);
+                }
+              }}
+            />
+          ) : undefined
+        }
+      />
 
       {/* 右侧可收缩的代码审查（Review）边栏：新对话还没有聊天内容时强制隐藏 */}
       <ReviewSidebar
