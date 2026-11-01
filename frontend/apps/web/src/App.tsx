@@ -422,6 +422,9 @@ export function App() {
       if (ws && ws.trim().length > 0) {
         addWorkspace(ws.trim());
       }
+      // 新建对话一律取消分屏：旧分屏可能展示着历史会话，新建后只保留最新对话这一个全屏窗格，
+      // 避免出现「新建了对话但旧分屏还在」的状态；需要分屏时从侧边栏重新拖拽发起。
+      setSplitSessionId(null);
       // 如果当前已经是空会话，直接复用当前对话并同步工作区归属，不重复向列表追加多余的「新对话」
       if (state.messages.length === 0 && state.activities.length === 0) {
         sessionsManager.createSession(state.threadId, ws ?? "");
