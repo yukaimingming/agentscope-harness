@@ -139,10 +139,19 @@ public class HarnessAgentManager {
             ReflectionMiddleware reflection = new ReflectionMiddleware(
                     workspaceRoot, properties.getUserId(), adapter::recordReflection);
 
+            // 网络搜索门控：仅当前端勾选（forwardedProps.webSearch=true）时本轮才挂载 web_search 工具；
+            // 未勾选时绝不装配 WebSearchTool，模型只能基于自身知识回答。
+            final boolean webSearchEnabled = Boolean.parseBoolean(
+                    String.valueOf(input.getForwardedProps() != null
+                            ? input.getForwardedProps().getOrDefault("webSearch", Boolean.FALSE)
+                            : Boolean.FALSE));
+
             // 4. 构建 HarnessAgent
             HarnessAgent.Builder builder = HarnessAgent.builder()
                     .name("agentscope-spring-assistant")
-                    .sysPrompt("你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、网络搜索与实时信息检索、技能执行与子智能体协同能力。当用户询问最新资讯、实时动态或天气（例如'深圳天气怎么样'）时，必须调用 web_search 工具获取最新数据和权威来源链接。始终使用中文清晰友好地回答。")
+                    .sysPrompt(webSearchEnabled
+                            ? "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、网络搜索与实时信息检索、技能执行与子智能体协同能力。当用户询问最新资讯、实时动态或天气（例如'深圳天气怎么样'）时，必须调用 web_search 工具获取最新数据和权威来源链接。始终使用中文清晰友好地回答。"
+                            : "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、技能执行与子智能体协同能力。本次运行未启用网络搜索工具，请基于已有知识回答；如遇时效性问题请如实说明当前无法获取实时信息。始终使用中文清晰友好地回答。")
                     .model(model)
                     .workspace(Paths.get(workspaceRoot))
                     .modelExecutionConfig(ExecutionConfig.builder()
@@ -175,13 +184,23 @@ public class HarnessAgentManager {
 
             HarnessAgent agent = builder.build();
 
-            // 替换为全功能网络搜索工具（免第三方 Key 依赖，自带气象与通用网页索引与来源引用）
-            try {
-                agent.getToolkit().removeTool("web_search");
-                agent.getToolkit().registerTool(webSearchTool);
-                log.info("已成功装载全功能网络搜索工具 WebSearchTool");
-            } catch (Exception e) {
-                log.warn("注册 WebSearchTool 异常: {}", e.getMessage());
+            // 网络搜索工具装配：仅勾选时替换为全功能 WebSearchTool（免第三方 Key 依赖，自带气象与通用网页索引与来源引用）；
+            // 未勾选时移除框架内置 web_search（如有），保证本轮没有任何联网搜索工具。
+            if (webSearchEnabled) {
+                try {
+                    agent.getToolkit().removeTool("web_search");
+                    agent.getToolkit().registerTool(webSearchTool);
+                    log.info("本轮已勾选网络搜索：装载全功能 WebSearchTool");
+                } catch (Exception e) {
+                    log.warn("注册 WebSearchTool 异常: {}", e.getMessage());
+                }
+            } else {
+                try {
+                    agent.getToolkit().removeTool("web_search");
+                    log.info("本轮未勾选网络搜索：不装配 WebSearchTool");
+                } catch (Exception e) {
+                    log.warn("移除默认 web_search 工具异常: {}", e.getMessage());
+                }
             }
 
             // 5. 注册 MCP（如有配置）

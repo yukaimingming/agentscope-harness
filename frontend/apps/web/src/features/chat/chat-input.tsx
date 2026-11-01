@@ -29,6 +29,8 @@ import {
   ArrowUpIcon,
   ClockIcon,
   ZapIcon,
+  LightbulbIcon,
+  XIcon,
 } from "lucide-react";
 import {
   PromptInput,
@@ -55,6 +57,7 @@ import {
 } from "@deepagent/shared";
 import type { ChatMessage } from "./client-reducer.js";
 import { StatsLine } from "./session-stats.js";
+import { DropdownMenuItem } from "../../components/ui/dropdown-menu.js";
 import { cn } from "../../lib/utils.js";
 import { extractFolderName } from "./use-sessions.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
@@ -110,6 +113,12 @@ interface ChatInputProps {
   /** 当前会话最近一份待办计划。 */
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void;
+  /** 计划模式：独立勾选，开启后代理先输出实施计划，待确认后再执行（参考 ZCode 开源仓库实现）。*/
+  planEnabled?: boolean;
+  onPlanEnabledChange?: (enabled: boolean) => void;
+  /** 网络搜索：仅勾选时本轮运行才挂载 web_search 工具（参照 Maf Harness web-search-menu-item）。*/
+  webSearch?: boolean;
+  onWebSearchChange?: (value: boolean) => void;
 }
 
 const PERMISSION_OPTIONS: Array<{
@@ -202,6 +211,12 @@ interface PromptInputComposerProps {
   supportedEfforts: readonly ReasoningEffort[];
   onEffortChange: (effort: ReasoningEffort) => void;
   onStop: () => void;
+  /** 计划模式：独立勾选，开启后代理先输出实施计划，待确认后再执行（参考 ZCode 开源仓库实现）。*/
+  planEnabled?: boolean;
+  onPlanEnabledChange?: (enabled: boolean) => void;
+  /** 网络搜索：仅勾选时本轮运行才挂载 web_search 工具（参照 Maf Harness web-search-menu-item）。*/
+  webSearch?: boolean;
+  onWebSearchChange?: (value: boolean) => void;
 }
 
 function PromptInputComposer({
@@ -218,6 +233,10 @@ function PromptInputComposer({
   onAttachmentError,
   setPreviewAttachment,
   permissionMode,
+  planEnabled,
+  onPlanEnabledChange,
+  webSearch,
+  onWebSearchChange,
   isPermissionDropdownOpen,
   setIsPermissionDropdownOpen,
   selectPermissionMode,
@@ -320,6 +339,19 @@ function PromptInputComposer({
             />
             <PromptInputActionMenuContent className="border-zinc-200 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
               <PromptInputActionAddAttachments label="添加图片或文件" />
+              {/* 联网搜索开关：仅勾选时本轮运行挂载 web_search 工具（preventDefault 保持菜单开启便于切换，参照 Maf Harness） */}
+              <DropdownMenuItem
+                data-testid="web-search-menu-item"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  onWebSearchChange?.(!webSearch);
+                }}
+                className={webSearch ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : undefined}
+              >
+                <GlobeIcon className="mr-2 size-4" />
+                网络搜索
+                {webSearch && <CheckIcon className="ml-auto size-4 text-blue-500 dark:text-blue-400" />}
+              </DropdownMenuItem>
             </PromptInputActionMenuContent>
           </PromptInputActionMenu>
 
@@ -355,6 +387,29 @@ function PromptInputComposer({
 
             {isPermissionDropdownOpen && (
               <div className="workspace-dropdown-panel composer-menu absolute bottom-full left-0 z-50 mb-2 w-[min(21rem,calc(100vw-2rem))] rounded-xl border border-zinc-700/70 bg-[#242427] p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                {/* 计划模式：独立勾选，不与权限模式互斥（参考 ZCode 开源仓库 V4ComposerModeControls 实现） */}
+                <button
+                  type="button"
+                  data-testid="plan-mode-toggle"
+                  aria-pressed={planEnabled}
+                  onClick={() => onPlanEnabledChange?.(!planEnabled)}
+                  title="开启后代理先输出实施计划，待确认后再执行"
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors border",
+                    planEnabled
+                      ? "bg-[#2f2f35] text-zinc-100 border-transparent font-medium"
+                      : "hover:bg-[#2f2f35] text-zinc-300 border border-transparent",
+                  )}
+                >
+                  <LightbulbIcon className={cn("size-5 shrink-0", planEnabled ? "text-zinc-100" : "text-zinc-300")} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-medium">计划模式</span>
+                    <span className="block text-[11.5px] leading-snug text-zinc-400">编辑前先出计划。</span>
+                  </span>
+                  {planEnabled && <CheckIcon className={cn("size-4 shrink-0", "text-zinc-200")} />}
+                </button>
+                <div role="separator" className="my-1 h-px shrink-0 bg-zinc-700/70" />
+
                 {PERMISSION_OPTIONS.map(({ mode, label, description, Icon }) => {
                   const isSelected = permissionMode === mode;
                   const isFull = mode === "full";
@@ -395,6 +450,44 @@ function PromptInputComposer({
               </div>
             )}
           </div>
+
+          {/* 计划模式标记：开启后显示，点击关闭（参考 ZCode 开源仓库实现） */}
+          {planEnabled && (
+            <span data-testid="plan-mode-marker" className="flex shrink-0 items-center gap-1">
+              <span role="separator" aria-orientation="vertical" className="h-3 w-px shrink-0 bg-zinc-700" />
+              <button
+                type="button"
+                data-testid="plan-mode-marker-close"
+                onClick={() => onPlanEnabledChange?.(false)}
+                title="取消下一次提交的计划模式"
+                aria-label="取消计划模式"
+                className="group/plan composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800/70 hover:text-white border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap"
+              >
+                <LightbulbIcon className="size-3.5 shrink-0 group-hover/plan:hidden" />
+                <XIcon className="hidden size-3.5 shrink-0 group-hover/plan:block" />
+                <span className="text-[11.5px] font-medium">计划模式</span>
+              </button>
+            </span>
+          )}
+
+          {/* 网络搜索标记：勾选后显示，点击关闭（参照本文件计划模式标记与 Maf Harness） */}
+          {webSearch && (
+            <span data-testid="web-search-marker" className="flex shrink-0 items-center gap-1">
+              <span role="separator" aria-orientation="vertical" className="h-3 w-px shrink-0 bg-zinc-700" />
+              <button
+                type="button"
+                data-testid="web-search-marker-close"
+                onClick={() => onWebSearchChange?.(false)}
+                title="取消下一次提交的网络搜索"
+                aria-label="取消网络搜索"
+                className="group/websearch composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800/70 hover:text-white border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap"
+              >
+                <GlobeIcon className="size-3.5 shrink-0 group-hover/websearch:hidden" />
+                <XIcon className="hidden size-3.5 shrink-0 group-hover/websearch:block" />
+                <span className="text-[11.5px] font-medium">网络搜索</span>
+              </button>
+            </span>
+          )}
 
           {/* 1. 模型选择下拉菜单 */}
           <div className="relative shrink-0" ref={modelDropdownRef}>
@@ -649,6 +742,10 @@ export function ChatInput({
   todoActivity,
   permissionMode,
   onPermissionModeChange,
+  planEnabled,
+  onPlanEnabledChange,
+  webSearch,
+  onWebSearchChange,
   messages = [],
   activities = [],
 }: ChatInputProps) {
@@ -1112,6 +1209,10 @@ export function ChatInput({
                 onAttachmentError={handleAttachmentError}
                 setPreviewAttachment={setPreviewAttachment}
                 permissionMode={permissionMode}
+                planEnabled={planEnabled}
+                onPlanEnabledChange={onPlanEnabledChange}
+                webSearch={webSearch}
+                onWebSearchChange={onWebSearchChange}
                 isPermissionDropdownOpen={isPermissionDropdownOpen}
                 setIsPermissionDropdownOpen={setIsPermissionDropdownOpen}
                 selectPermissionMode={selectPermissionMode}

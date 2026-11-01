@@ -828,6 +828,10 @@ export function buildRunParameters(
     workspaceRoot?: string;
     /** 本次运行采用的权限审批模式。 */
     permissionMode?: PermissionMode;
+    /** 计划模式：开启后代理先输出实施计划，待确认后再执行。*/
+    planEnabled?: boolean;
+    /** 本次运行是否启用联网搜索工具；未开启时后端不装配 web_search。 */
+    webSearch?: boolean;
   },
   resume?: Array<{ interruptId: string; status: "resolved" | "cancelled"; payload?: unknown }>,
 ): RunAgentParameters {
@@ -844,6 +848,8 @@ export function buildRunParameters(
       effort: options.effort,
       workspaceRoot: options.workspaceRoot,
       permissionMode: options.permissionMode ?? DEFAULT_PERMISSION_MODE,
+      planEnabled: options.planEnabled ?? false,
+      webSearch: options.webSearch ?? false,
     },
     ...(resume && resume.length > 0 ? { resume } : {}),
   };

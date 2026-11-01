@@ -40,6 +40,10 @@ export interface AgentRunOptions {
   effort: "low" | "medium" | "high";
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
+  /** 计划模式：开启后代理先输出实施计划，待确认后再执行。*/
+  planEnabled?: boolean;
+  /** 本次运行是否启用联网搜索工具（仅勾选时后端才挂载 web_search）。 */
+  webSearch?: boolean;
 }
 
 /** 单个中断的决策类型。 */

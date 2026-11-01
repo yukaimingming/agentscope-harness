@@ -65,6 +65,12 @@ export interface ChatPaneProps {
   onDismissProviderWarning?: () => void;
   onOpenSettingsFromWarning?: () => void;
   onDropSession?: (droppedSessionId: string) => void;
+  /** 计划模式开关（参考 ZCode 开源仓库实现）*/
+  planEnabled?: boolean;
+  onPlanEnabledChange?: (enabled: boolean) => void;
+  /** 网络搜索开关：仅勾选时本轮运行才挂载 web_search 工具（参照 Maf Harness）。*/
+  webSearch?: boolean;
+  onWebSearchChange?: (value: boolean) => void;
 }
 
 export function ChatPane({
@@ -110,6 +116,10 @@ export function ChatPane({
   onDismissProviderWarning,
   onOpenSettingsFromWarning,
   onDropSession,
+  planEnabled,
+  onPlanEnabledChange,
+  webSearch,
+  onWebSearchChange,
 }: ChatPaneProps) {
   const latestTodoActivity = useMemo<Activity | null>(() => {
     const todos = state.activities.filter((activity) => activity.kind === "todo");
@@ -367,6 +377,10 @@ export function ChatPane({
           onSelectModel={onSelectModel}
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          planEnabled={planEnabled}
+          onPlanEnabledChange={onPlanEnabledChange}
+          webSearch={webSearch}
+          onWebSearchChange={onWebSearchChange}
           onOpenSettings={onOpenSettings}
           workspaceRoot={workspaceRoot}
           messages={state.messages}
