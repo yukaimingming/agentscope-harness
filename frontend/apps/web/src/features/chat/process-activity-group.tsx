@@ -14,6 +14,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
   PanelRightOpenIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import type { Activity } from "@deepagent/shared";
 import { openInWebPreview } from "../review/web-preview-events.js";
@@ -80,6 +81,8 @@ const TOOL_ACTIONS: Record<string, string> = {
   file_access_delete: "删除了文件",
   read_pdf: "解析了 PDF 文档",
   read_excel: "解析了 Excel 表格",
+  generate_diagram: "生成了图表",
+  validate_diagram: "校验了图表语法",
   reflection_judge: "完成了反思评估",
   web_search: "搜索了网络",
   search_web: "搜索了网络",
@@ -116,6 +119,8 @@ const ACTIVE_TOOL_ACTIONS: Record<string, string> = {
   file_access_delete: "正在删除文件",
   read_pdf: "正在解析 PDF 文档",
   read_excel: "正在解析 Excel 表格",
+  generate_diagram: "正在生成图表",
+  validate_diagram: "正在校验图表语法",
   reflection_judge: "正在进行反思评估",
   web_search: "正在搜索网络",
   search_web: "正在搜索网络",
@@ -170,7 +175,7 @@ function toolInputSummary(activity: Activity): string {
             ? [query || path]
             : (name.includes("fetch") || name === "web_fetch" || name === "web_fetch_exa")
               ? [url || path]
-              : [path];
+              : (name === "generate_diagram") ? [get("type", "description")] : (name === "validate_diagram") ? ["校验语法"] : [path];
   const summary = parts.filter(Boolean).join(" · ");
   return summary.length > 160 ? `${summary.slice(0, 157)}…` : summary;
 }
@@ -232,6 +237,7 @@ function ActionGlyph({ name, className }: { name: string; className?: string }) 
   if (name === "web_search" || name === "search_web" || name === "web_search_exa" || name === "web_fetch" || name === "web_fetch_exa" || name.includes("search_web") || name.includes("web_")) {
     return <GlobeIcon className={className} />;
   }
+  if (name === "generate_diagram" || name === "validate_diagram") return <WorkflowIcon className={className} />;
   if (name === "execute" || name === "run_shell") return <TerminalIcon className={className} />;
   if (name === "write_todos" || name.startsWith("todos_") || name === "write_file" || name === "edit_file" || name === "file_access_write" || name === "file_access_replace" || name === "file_access_replace_lines") {
     return <PencilLineIcon className={className} />;

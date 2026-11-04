@@ -28,6 +28,7 @@ import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.memory.compaction.ToolResultEvictionConfig;
 import io.agentscope.harness.agent.subagent.SubagentDeclaration;
 import com.agentscope.harness.tool.WebSearchTool;
+import com.agentscope.harness.tool.DiagramTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -56,6 +57,7 @@ public class HarnessAgentManager {
     private final ProviderService providerService;
     private final WorkspaceService workspaceService;
     private final WebSearchTool webSearchTool;
+    private final DiagramTool diagramTool;
     private final ObjectMapper objectMapper;
 
     /** 线程活跃状态记录，用于取消与清理。 */
@@ -70,11 +72,13 @@ public class HarnessAgentManager {
                                ProviderService providerService,
                                WorkspaceService workspaceService,
                                WebSearchTool webSearchTool,
+                               DiagramTool diagramTool,
                                ObjectMapper objectMapper) {
         this.properties = properties;
         this.providerService = providerService;
         this.workspaceService = workspaceService;
         this.webSearchTool = webSearchTool;
+        this.diagramTool = diagramTool;
         this.objectMapper = objectMapper;
     }
 
@@ -146,12 +150,25 @@ public class HarnessAgentManager {
                             ? input.getForwardedProps().getOrDefault("webSearch", Boolean.FALSE)
                             : Boolean.FALSE));
 
+            // 计划模式约束：当 planEnabled=true 时，在拼装 system prompt 时注入指令
+            final boolean planEnabled = Boolean.parseBoolean(
+                    String.valueOf(input.getForwardedProps() != null
+                            ? input.getForwardedProps().getOrDefault("planEnabled", Boolean.FALSE)
+                            : Boolean.FALSE));
+
+            String diagramRule = " 你具备专业图表生成能力（generate_diagram、validate_diagram），当用户需要绘制或修改流程图、时序图、状态机图、类图、ER图、架构图等图表时，必须调用 generate_diagram 工具生成 Mermaid DSL 源码，不要使用 AI 直接生成图片；支持基于已有图表（sourceCode）进行增量修改与扩展；最终回复必须包含完整的 Mermaid 代码块（```mermaid ... ```）。";
+            String baseSysPrompt = (webSearchEnabled
+                    ? "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、网络搜索与实时信息检索、技能执行与子智能体协同能力。当用户询问最新资讯、实时动态或天气（例如'深圳天气怎么样'）时，必须调用 web_search 工具获取最新数据和权威来源链接。始终使用中文清晰友好地回答。"
+                    : "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、技能执行与子智能体协同能力。本次运行未启用网络搜索工具，请基于已有知识回答；如遇时效性问题请如实说明当前无法获取实时信息。始终使用中文清晰友好地回答。")
+                    + diagramRule;
+            if (planEnabled) {
+                baseSysPrompt += " 【计划模式约束】先输出实施计划，等用户确认后再执行。在用户未明确确认执行前，严禁直接调用写文件、执行终端命令等修改操作工具。";
+            }
+
             // 4. 构建 HarnessAgent
             HarnessAgent.Builder builder = HarnessAgent.builder()
                     .name("agentscope-spring-assistant")
-                    .sysPrompt(webSearchEnabled
-                            ? "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、网络搜索与实时信息检索、技能执行与子智能体协同能力。当用户询问最新资讯、实时动态或天气（例如'深圳天气怎么样'）时，必须调用 web_search 工具获取最新数据和权威来源链接。始终使用中文清晰友好地回答。"
-                            : "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、技能执行与子智能体协同能力。本次运行未启用网络搜索工具，请基于已有知识回答；如遇时效性问题请如实说明当前无法获取实时信息。始终使用中文清晰友好地回答。")
+                    .sysPrompt(baseSysPrompt)
                     .model(model)
                     .workspace(Paths.get(workspaceRoot))
                     .modelExecutionConfig(ExecutionConfig.builder()
@@ -183,6 +200,14 @@ public class HarnessAgentManager {
                             .build());
 
             HarnessAgent agent = builder.build();
+
+            // 装配图表生成工具 DiagramTool
+            try {
+                agent.getToolkit().registerTool(diagramTool);
+                log.info("装载图表生成工具 DiagramTool");
+            } catch (Exception e) {
+                log.warn("注册 DiagramTool 异常: {}", e.getMessage());
+            }
 
             // 网络搜索工具装配：仅勾选时替换为全功能 WebSearchTool（免第三方 Key 依赖，自带气象与通用网页索引与来源引用）；
             // 未勾选时移除框架内置 web_search（如有），保证本轮没有任何联网搜索工具。
