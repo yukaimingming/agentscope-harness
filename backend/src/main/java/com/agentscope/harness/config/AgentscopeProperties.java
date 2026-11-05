@@ -2,6 +2,8 @@ package com.agentscope.harness.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.List;
+
 /**
  * AgentScope Harness 配置属性。
  */
@@ -34,6 +36,15 @@ public class AgentscopeProperties {
 
     /** DeepWiki MCP 服务器地址（为空则不启用）。 */
     private String mcpDeepwikiUrl = "https://mcp.deepwiki.com/mcp";
+
+    /** agent-desktop MCP 是否启用。 */
+    private boolean mcpAgentDesktopEnabled = true;
+
+    /** agent-desktop MCP 启动命令（默认使用 node 调用仓库内 patch 脚本）。 */
+    private String mcpAgentDesktopCommand = "node";
+
+    /** agent-desktop MCP 启动参数（默认指向仓库内相对路径）。 */
+    private List<String> mcpAgentDesktopArgs = List.of("backend/tools/agent-desktop/mcp-server.js", "mcp");
 
     /** 是否默认展开思考流。 */
     private boolean thinkingExpanded = false;
@@ -108,6 +119,30 @@ public class AgentscopeProperties {
 
     public void setMcpDeepwikiUrl(String mcpDeepwikiUrl) {
         this.mcpDeepwikiUrl = mcpDeepwikiUrl;
+    }
+
+    public boolean isMcpAgentDesktopEnabled() {
+        return mcpAgentDesktopEnabled;
+    }
+
+    public void setMcpAgentDesktopEnabled(boolean mcpAgentDesktopEnabled) {
+        this.mcpAgentDesktopEnabled = mcpAgentDesktopEnabled;
+    }
+
+    public String getMcpAgentDesktopCommand() {
+        return mcpAgentDesktopCommand;
+    }
+
+    public void setMcpAgentDesktopCommand(String mcpAgentDesktopCommand) {
+        this.mcpAgentDesktopCommand = mcpAgentDesktopCommand;
+    }
+
+    public List<String> getMcpAgentDesktopArgs() {
+        return mcpAgentDesktopArgs;
+    }
+
+    public void setMcpAgentDesktopArgs(List<String> mcpAgentDesktopArgs) {
+        this.mcpAgentDesktopArgs = mcpAgentDesktopArgs;
     }
 
     public boolean isThinkingExpanded() {

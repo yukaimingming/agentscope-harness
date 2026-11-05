@@ -9,6 +9,7 @@ import com.agentscope.harness.model.ProviderModels.ProviderConfig;
 import com.agentscope.harness.model.RunAgentInput;
 import com.agentscope.harness.model.RunAgentInput.ResumeEntry;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.ConfirmResult;
 import io.agentscope.core.event.RequireUserConfirmEvent;
@@ -20,7 +21,11 @@ import io.agentscope.core.model.ExecutionConfig;
 import io.agentscope.core.model.transport.HttpTransport;
 import io.agentscope.core.model.transport.HttpTransportConfig;
 import io.agentscope.core.model.transport.JdkHttpTransport;
+import io.agentscope.core.state.InMemoryAgentStateStore;
+import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
+import io.agentscope.core.tool.subagent.SubAgentConfig;
+import io.agentscope.core.tool.subagent.SubAgentTool;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.memory.MemoryConfig;
@@ -157,10 +162,12 @@ public class HarnessAgentManager {
                             : Boolean.FALSE));
 
             String diagramRule = " 你具备专业图表生成能力（generate_diagram、validate_diagram），当用户需要绘制或修改流程图、时序图、状态机图、类图、ER图、架构图等图表时，必须调用 generate_diagram 工具生成 Mermaid DSL 源码，不要使用 AI 直接生成图片；支持基于已有图表（sourceCode）进行增量修改与扩展；最终回复必须包含完整的 Mermaid 代码块（```mermaid ... ```）。";
+            String computerUseRule = " 【计算机与桌面操作委派规则】你配备了 computer-use 自动化子智能体工具。当且仅当用户任务确实需要操作本台电脑上的桌面应用程序、打开系统软件（例如记事本 Notepad、计算器 Calculator、设置等）、在桌面应用窗口中输入文字、点击按钮或查看桌面窗口状态时，你必须调用 computer-use 工具委派给它完成，并在 message 参数中详细给出任务目标。你自身的工具箱中不直接包含 desktop_* 系列底层桌面工具，绝不要直接拒绝用户的电脑操作需求，直接委派给 computer-use 即可。";
             String baseSysPrompt = (webSearchEnabled
                     ? "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、网络搜索与实时信息检索、技能执行与子智能体协同能力。当用户询问最新资讯、实时动态或天气（例如'深圳天气怎么样'）时，必须调用 web_search 工具获取最新数据和权威来源链接。始终使用中文清晰友好地回答。"
                     : "你是运行在 AgentScope Harness 上的高级智能体助手，具备文件读写、任务拆解规划、技能执行与子智能体协同能力。本次运行未启用网络搜索工具，请基于已有知识回答；如遇时效性问题请如实说明当前无法获取实时信息。始终使用中文清晰友好地回答。")
-                    + diagramRule;
+                    + diagramRule
+                    + (properties.isMcpAgentDesktopEnabled() ? computerUseRule : "");
             if (planEnabled) {
                 baseSysPrompt += " 【计划模式约束】先输出实施计划，等用户确认后再执行。在用户未明确确认执行前，严禁直接调用写文件、执行终端命令等修改操作工具。";
             }
@@ -237,6 +244,77 @@ public class HarnessAgentManager {
                 );
             }
 
+            // 5.1 独立挂载 agent-desktop MCP 与专门的 computer-use 子智能体
+            McpClientWrapper desktopClient = null;
+            if (properties.isMcpAgentDesktopEnabled()) {
+                Toolkit computerToolkit = new Toolkit();
+                try {
+                    desktopClient = McpBootstrap.registerStdio(
+                            computerToolkit,
+                            new McpBootstrap.StdioServerSpec(
+                                    "agent-desktop",
+                                    properties.getMcpAgentDesktopCommand(),
+                                    properties.getMcpAgentDesktopArgs(),
+                                    Map.of(),
+                                    Duration.ofSeconds(60)
+                            )
+                    );
+                    if (desktopClient != null) {
+                        String computerSubagentPrompt = """
+                                你是一个专门执行本地计算机与桌面应用操作的自动化子智能体（Computer Use Agent）。
+                                你的职责：只有当任务确实需要操作这台电脑上的桌面应用、窗口、界面交互时才使用底层桌面工具。
+                                核心规则：
+                                1. 工具能力：你拥有 desktop_* 系列工具，包括 desktop_launch（启动桌面应用，例如 app="notepad" 或 app="calc"）、desktop_snapshot（抓取无障碍树及带 @ref 的 UI 元素）、desktop_click（按 @ref 点击元素）、desktop_type（按 @ref 输入文本）、desktop_press（按键如 return/enter）、desktop_list_windows（列出当前活动窗口）、desktop_screenshot（截取应用窗口截图）、desktop_wait（等待 UI 渲染）等。
+                                2. Ref 引用机制与 STALE_REF：元素的 ref（如 @e1、@e2）是根据当前无障碍树快照动态生成的编号。当界面发生变化或操作后，旧的 ref 可能会过期失效。如需多步操作，每次点击或输入后，若需要继续操作其他元素，必须先调用 desktop_snapshot 获取最新的有效 ref，绝对不要臆造 ref。
+                                3. 常用流程：
+                                   - 若需打开某个应用：首先调用 desktop_launch（app="notepad"），或检查 desktop_list_windows 确认窗口已在前台；
+                                   - 然后调用 desktop_snapshot 查看窗口中的编辑区域或按钮元素，获取目标 @ref；
+                                   - 调用 desktop_set_value（ref="@目标ref", value="文本内容"）或 desktop_type（ref="@目标ref", text="文本内容"）完成输入，或 desktop_click 点击按钮；
+                                   - 如果需要保存或换行，调用 desktop_press（key="ctrl+s" 或 "enter"）；
+                                4. 安全规范：能只读观察就不要随意改动其他窗口，操作完成后总结操作步骤与结果并回复。
+                                """;
+
+                        io.agentscope.core.permission.PermissionContextState.Builder bypassBuilder =
+                                io.agentscope.core.permission.PermissionContextState.builder()
+                                        .mode(io.agentscope.core.permission.PermissionMode.BYPASS);
+                        for (String toolName : computerToolkit.getToolNames()) {
+                            bypassBuilder.addAllowRule(toolName, new io.agentscope.core.permission.PermissionRule(
+                                    toolName, "*", io.agentscope.core.permission.PermissionBehavior.ALLOW, "computer-use-subagent"
+                            ));
+                        }
+                        io.agentscope.core.permission.PermissionContextState bypassContext = bypassBuilder.build();
+
+                        ReActAgent computerAgent = ReActAgent.builder()
+                                .name("computer-use")
+                                .description("操作本地电脑桌面、原生应用与窗口无障碍树的自动化子智能体")
+                                .sysPrompt(computerSubagentPrompt)
+                                .model(model)
+                                .toolkit(computerToolkit)
+                                .permissionContext(bypassContext)
+                                .stateStore(new InMemoryAgentStateStore())
+                                .maxIters(15)
+                                .build();
+
+                        SubAgentConfig subConfig = SubAgentConfig.builder()
+                                .toolName("computer-use")
+                                .description("操作本地 Windows 桌面、窗口与原生应用的自动化子智能体。当且仅当需要启动程序（如 Notepad 记事本、计算器、设置等）、在桌面应用窗口中点击、输入文本、查看窗口界面无障碍树时，必须调用此工具委派执行。入参说明：message 为委派给子智能体的具体操作任务描述。")
+                                .build();
+
+                        SubAgentTool subAgentTool = new SubAgentTool(() -> {
+                            try {
+                                computerAgent.setPermissionMode(properties.getUserId(), threadId, io.agentscope.core.permission.PermissionMode.BYPASS);
+                            } catch (Exception ignored) {}
+                            return computerAgent;
+                        }, subConfig);
+                        agent.getToolkit().registerAgentTool(subAgentTool);
+                        log.info("成功挂载 computer-use 子智能体（持独立 Toolkit 与 agent-desktop MCP，已启用全自动免审批）");
+                    }
+                } catch (Exception e) {
+                    log.warn("[MCP] agent-desktop 计算机操作子智能体挂载失败: {}，降级运行", e.getMessage());
+                }
+            }
+            final McpClientWrapper finalDesktopClient = desktopClient;
+
             // 6. 构造 RuntimeContext（实现用户与多会话持久化隔离）
             RuntimeContext ctx = RuntimeContext.builder()
                     .sessionId(threadId)
@@ -257,7 +335,7 @@ public class HarnessAgentManager {
 
             try {
                 agent.setPermissionMode(ctx, permMode);
-                agent.setPermissionMode(threadId, properties.getUserId(), permMode);
+                agent.setPermissionMode(properties.getUserId(), threadId, permMode);
                 log.info("会话 [{}] 应用权限模式: {} -> {}", threadId, permModeStr, permMode);
             } catch (Exception pe) {
                 log.warn("设置 Agent 权限模式异常: {}", pe.getMessage());
@@ -325,6 +403,14 @@ public class HarnessAgentManager {
                         }
                         activeExecutions.remove(threadId);
                         onComplete.run();
+                    })
+                    .doFinally(signalType -> {
+                        if (finalDesktopClient != null) {
+                            try {
+                                finalDesktopClient.close();
+                                log.info("已释放 agent-desktop MCP 客户端连接与进程资源");
+                            } catch (Exception ignored) {}
+                        }
                     })
                     .subscribe();
 
