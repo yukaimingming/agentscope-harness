@@ -6,6 +6,28 @@
 
 ---
 
+## 🆕 最近更新 (Recent Changes)
+
+### 1. 设置面板重构：Maf 式双栏布局 (Settings Panel Redesign)
+设置弹窗全面迁移为 Maf 式双栏布局——左侧为搜索框与模块导航，右侧为详情内容，内置「通用 / AI / 电脑」三大模块：
+- **通用**：三档主题切换（系统默认 / 浅色 / 深色），跟随系统或手动固定；
+- **AI**：预设厂商卡片网格 + 「更多提供方」折叠网格 + 搜索过滤 + 厂商详情表单，添加、探测与保存一气呵成；
+- **电脑**：Computer Use 开关（详见下节）。
+
+| 设置中心 - 通用页（三档主题） | 设置中心 - 电脑页（Computer Use 开关） |
+| :---: | :---: |
+| ![设置中心通用页](docs/images/20-settings-general-tab.png) | ![设置中心电脑页](docs/images/21-settings-computer-use-tab.png) |
+
+### 2. Computer Use 开关前后端闭环 (Computer Use Toggle)
+- 新增 `GET / PUT /api/settings/computer-use` 接口，配置持久化至 `.data/settings.json`，**默认关闭**；
+- 仅在开关开启后才挂载 `agent-desktop` computer-use 子代理（stdio MCP 桌面工具），关闭态不加载任何桌面能力；
+- **关闭态兜底**：模型会明确提示前往设置开启，严禁写文件冒充执行；接口异常时返回中文 `RUN_ERROR` 兜底提示，前端可优雅呈现。
+
+### 3. agent-desktop 进程树清理 (Process Tree Cleanup)
+agent-desktop MCP 工具进程通过 pidfile 登记，会话结束或异常退出后自动 `taskkill` 清理整个进程树，并同步清理 overlay 会话目录，杜绝遗留进程与垃圾文件。
+
+---
+
 ## 📸 功能界面预览 (Feature Showcase)
 
 ### 1. 智能体工作台主界面 (Dashboard Overview)
