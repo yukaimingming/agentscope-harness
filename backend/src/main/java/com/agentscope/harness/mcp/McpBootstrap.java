@@ -67,11 +67,14 @@ public final class McpBootstrap {
 
     /**
      * 构建并注册单个 Stdio MCP 客户端到指定 Toolkit。
+     * 连接任一步骤失败时，会关闭已半建成的客户端（终止其 stdio 子进程）后返回 null，
+     * 避免进程泄漏。
      */
     public static McpClientWrapper registerStdio(Toolkit toolkit, StdioServerSpec spec) {
+        McpClientWrapper client = null;
         try {
             ResolvedCommand resolved = resolveStdioCommand(spec.command(), spec.args());
-            McpClientWrapper client = McpClientBuilder.create(spec.name())
+            client = McpClientBuilder.create(spec.name())
                     .stdioTransport(resolved.command(), resolved.args(), spec.env() != null ? spec.env() : Map.of())
                     .timeout(spec.requestTimeout())
                     .initializationTimeout(spec.requestTimeout())
@@ -83,6 +86,11 @@ public final class McpBootstrap {
             return client;
         } catch (Exception e) {
             log.warn("[MCP] Stdio {} 连接失败: {}，该 server 工具暂不可用", spec.name(), e.getMessage());
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (Exception ignored) {}
+            }
             return null;
         }
     }

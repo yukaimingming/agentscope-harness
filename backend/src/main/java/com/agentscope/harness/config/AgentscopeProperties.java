@@ -37,8 +37,11 @@ public class AgentscopeProperties {
     /** DeepWiki MCP 服务器地址（为空则不启用）。 */
     private String mcpDeepwikiUrl = "https://mcp.deepwiki.com/mcp";
 
-    /** agent-desktop MCP 是否启用。 */
-    private boolean mcpAgentDesktopEnabled = true;
+    /**
+     * agent-desktop MCP（Computer Use 电脑桌面自动化）是否启用。
+     * 默认关闭：需在设置面板「电脑」页显式开启（运行时切换会持久化到 .data/settings.json）。
+     */
+    private boolean mcpAgentDesktopEnabled = false;
 
     /** agent-desktop MCP 启动命令（默认使用 node 调用仓库内 patch 脚本）。 */
     private String mcpAgentDesktopCommand = "node";

@@ -27,6 +27,7 @@ import { SplitChatView } from "./features/chat/split-chat-view.js";
 import { SettingsModal } from "./features/settings/settings-modal.js";
 import { useProviderSettings } from "./features/settings/use-provider-settings.js";
 import { useTheme } from "./features/settings/use-theme.js";
+import { useComputerUseSettings } from "./features/settings/use-computer-use-settings.js";
 import { useSessions, normalizePath, type SessionSummary } from "./features/chat/use-sessions.js";
 import { FolderPickerModal } from "./features/chat/folder-picker-modal.js";
 import { ReviewSidebar } from "./features/review/review-sidebar.js";
@@ -38,7 +39,9 @@ const AGENT_URL = "/agent";
 
 export function App() {
   const settings = useProviderSettings();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, themeMode, setThemeMode } = useTheme();
+  // Computer Use（电脑桌面自动化）开关：与 Java 后端 agent-desktop 配置双向同步，默认关闭
+  const { computerUseEnabled, onComputerUseEnabledChange } = useComputerUseSettings();
   const {
     state,
     isRunning,
@@ -1045,6 +1048,10 @@ export function App() {
         onSelectProvider={settings.setActiveProviderId}
         theme={theme}
         onThemeChange={setTheme}
+        themeMode={themeMode}
+        onThemeModeChange={setThemeMode}
+        computerUseEnabled={computerUseEnabled}
+        onComputerUseEnabledChange={onComputerUseEnabledChange}
       />
     </div>
   );
