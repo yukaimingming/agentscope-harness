@@ -904,7 +904,7 @@ function PromptInputComposer({
             disabled={!hasText && attachments.files.length === 0 && !isRunning}
             status={isRunning ? "streaming" : undefined}
             onStop={onStop}
-            className="chat-submit-btn size-8 rounded-lg transition-colors shadow-none border-0 border-none outline-none focus:outline-none focus-visible:ring-0 bg-zinc-900 text-white hover:bg-black dark:bg-zinc-100 dark:text-black dark:hover:bg-white disabled:opacity-30 disabled:bg-zinc-200 disabled:text-zinc-400 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+            className="chat-submit-btn size-8 rounded-full transition-colors shadow-none"
           />
         )}
       </PromptInputFooter>
