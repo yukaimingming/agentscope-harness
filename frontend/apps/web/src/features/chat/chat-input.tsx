@@ -54,6 +54,7 @@ import {
   availableEffortsForModel,
   type Activity,
   type PermissionMode,
+  type PublicProvider,
   type ReasoningEffort,
   type RunTokenUsage,
 } from "@deepagent/shared";
@@ -96,6 +97,12 @@ interface ChatInputProps {
   currentModel?: string | null;
   /** 切换模型回调 */
   onSelectModel?: (model: string) => void;
+  /** 所有已配置的模型厂商列表（用于按真实厂商分组选择模型） */
+  providers?: PublicProvider[];
+  /** 当前选中的厂商 ID */
+  activeProviderId?: string | null;
+  /** 按厂商与模型一键切换回调（同时切换厂商与模型） */
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
   /** 打开模型设置模态框 */
   onOpenSettings?: () => void;
   /** 当前工作区根目录（若为空或 null 则为直接聊天模式） */
@@ -214,6 +221,12 @@ interface PromptInputComposerProps {
   setIsModelDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
   availableModels: string[];
   onSelectModel?: (model: string) => void;
+  /** 所有已配置的模型厂商列表（用于按真实厂商分组选择模型） */
+  providers: PublicProvider[];
+  /** 当前选中的厂商 ID */
+  activeProviderId?: string | null;
+  /** 按厂商与模型一键切换回调（同时切换厂商与模型） */
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
   onOpenSettings?: () => void;
   modelDropdownRef: React.RefObject<HTMLDivElement | null>;
   messages: ChatMessage[];
@@ -266,6 +279,9 @@ function PromptInputComposer({
   setIsModelDropdownOpen,
   availableModels,
   onSelectModel,
+  providers,
+  activeProviderId,
+  onSelectProviderModel,
   onOpenSettings,
   modelDropdownRef,
   messages,
@@ -286,7 +302,7 @@ function PromptInputComposer({
   const attachments = usePromptInputAttachments();
   const hasContent = hasText || attachments.files.length > 0;
 
-  const [hoveredModel, setHoveredModel] = useState<string | null>(null);
+  const [hoveredModel, setHoveredModel] = useState<{ provId: string | null; model: string } | null>(null);
   const [submenuTop, setSubmenuTop] = useState<number>(0);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -305,7 +321,7 @@ function PromptInputComposer({
     };
   }, []);
 
-  const handleItemMouseEnter = (modelId: string, e: React.MouseEvent<HTMLElement>) => {
+  const handleItemMouseEnter = (provId: string | null, modelId: string, e: React.MouseEvent<HTMLElement>) => {
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
@@ -317,7 +333,7 @@ function PromptInputComposer({
       const maxTop = Math.max(0, parentRect.height - 130);
       setSubmenuTop(Math.min(Math.max(0, offset), maxTop));
     }
-    setHoveredModel(modelId);
+    setHoveredModel({ provId, model: modelId });
   };
 
   const handleItemMouseLeave = () => {
@@ -339,6 +355,20 @@ function PromptInputComposer({
     }, 150);
   };
 
+  /**
+   * 统一选择模型：带厂商上下文时同时切换厂商与模型（避免用 A 厂商的
+   * 密钥/端点请求 B 厂商的模型），无厂商分组时保持仅切模型的旧行为。
+   */
+  const handleSelectModel = (provId: string | null, modelId: string) => {
+    if (provId && onSelectProviderModel) {
+      onSelectProviderModel(provId, modelId);
+    } else {
+      onSelectModel?.(modelId);
+    }
+    setIsModelDropdownOpen(false);
+    setHoveredModel(null);
+  };
+
   const groupedModels = useMemo(() => {
     const groups: { provider: string; models: string[] }[] = [];
     const map = new Map<string, string[]>();
@@ -353,6 +383,12 @@ function PromptInputComposer({
     }
     return groups;
   }, [availableModels]);
+
+  // 按真实厂商分组（仅含已启用且有模型的厂商）；无厂商数据时回退到上面的推断分组
+  const groupedProviders = useMemo(
+    () => providers.filter((p) => p.enabled && p.models.length > 0),
+    [providers],
+  );
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -606,64 +642,130 @@ function PromptInputComposer({
               />
             </button>
 
-            {/* 模型列表下拉主面板 */}
+            {/* 模型列表下拉主面板：按真实厂商分组（标题栏 + 状态徽标 + 模型单列），无厂商数据时回退按模型名推断分组 */}
             {isModelDropdownOpen && (
               <div
                 ref={menuPanelRef}
-                className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-64 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#242427] text-zinc-900 dark:text-zinc-100 p-1.5 shadow-xl dark:shadow-2xl animate-in fade-in zoom-in-95 duration-100 overflow-visible"
+                className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-72 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#242427] text-zinc-900 dark:text-zinc-100 p-1.5 shadow-xl dark:shadow-2xl animate-in fade-in zoom-in-95 duration-100 overflow-visible"
               >
-                <div className="px-2 py-1 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                  <span>模型</span>
-                  {availableModels.length > 0 && <span>({availableModels.length})</span>}
-                </div>
-
-                <div className="max-h-56 overflow-y-auto space-y-2 my-1 scrollbar-thin scrollbar-thumb-zinc-700">
-                  {availableModels.length === 0 ? (
-                    <div className="px-2 py-2 text-[11.5px] text-zinc-500 text-center">
-                      暂无可用模型，请在设置中配置
-                    </div>
-                  ) : (
-                    groupedModels.map((group) => (
-                      <div key={group.provider} className="space-y-0.5">
-                        <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                          {group.provider}
-                        </div>
-                        {group.models.map((m) => {
-                          const isSelected = currentModel === m;
-                          const isHovered = hoveredModel === m;
-                          return (
-                            <div
-                              key={m}
-                              data-testid={`model-option-${m}`}
-                              onMouseEnter={(e) => handleItemMouseEnter(m, e)}
-                              onMouseLeave={handleItemMouseLeave}
-                              onClick={() => {
-                                onSelectModel?.(m);
-                                setIsModelDropdownOpen(false);
-                                setHoveredModel(null);
-                              }}
-                              className={cn(
-                                "group relative flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[12px] font-mono text-left transition-colors cursor-pointer select-none",
-                                isSelected
-                                  ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
-                                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200",
-                                isHovered && "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white"
-                              )}
-                            >
-                              <span className="truncate flex-1 mr-1.5">{m}</span>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {isSelected && (
-                                  <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0" />
-                                )}
-                                <ChevronRightIcon className="size-3 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-700 dark:group-hover:text-zinc-300 transition-colors" />
-                              </div>
-                            </div>
-                          );
-                        })}
+                {(() => {
+                  const hasProviderGroups = groupedProviders.length > 0;
+                  const totalGroupedModels = groupedProviders.reduce((acc, p) => acc + p.models.length, 0);
+                  return (
+                    <>
+                      <div className="px-2 py-1 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center justify-between">
+                        <span>模型</span>
+                        {(hasProviderGroups || availableModels.length > 0) && (
+                          <span className="font-normal text-[10.5px]">
+                            {hasProviderGroups
+                              ? `${groupedProviders.length} 厂商 · ${totalGroupedModels} 模型`
+                              : `(${availableModels.length})`}
+                          </span>
+                        )}
                       </div>
-                    ))
-                  )}
-                </div>
+
+                      <div className="max-h-56 overflow-y-auto space-y-2 my-1 scrollbar-thin scrollbar-thumb-zinc-700">
+                        {!hasProviderGroups && availableModels.length === 0 ? (
+                          <div className="px-2 py-2 text-[11.5px] text-zinc-500 text-center">
+                            暂无可用模型，请在设置中配置
+                          </div>
+                        ) : hasProviderGroups ? (
+                          groupedProviders.map((prov) => {
+                            const isCurrentProvider = prov.id === activeProviderId;
+                            return (
+                              <div key={prov.id} data-testid={`provider-group-${prov.id}`} className="space-y-0.5">
+                                {/* 厂商分组标题栏：名称 + 当前厂商/已就绪/未填 Key 状态徽标 */}
+                                <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/80 dark:bg-zinc-900/50 rounded-md">
+                                  <span className="truncate">{prov.label}</span>
+                                  <span
+                                    className={cn(
+                                      "text-[10px] px-1.5 py-0.2 rounded font-normal shrink-0",
+                                      isCurrentProvider
+                                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium"
+                                        : prov.hasApiKey
+                                          ? "bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                                          : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                                    )}
+                                  >
+                                    {isCurrentProvider ? "当前厂商" : prov.hasApiKey ? "已就绪" : "未填 Key"}
+                                  </span>
+                                </div>
+
+                                {/* 模型单列列表 */}
+                                <div className="space-y-0.5 pl-1">
+                                  {prov.models.map((m) => {
+                                    const isSelected = isCurrentProvider && currentModel === m;
+                                    const isHovered = hoveredModel?.provId === prov.id && hoveredModel?.model === m;
+                                    return (
+                                      <div
+                                        key={`${prov.id}:${m}`}
+                                        data-testid={`model-option-${prov.id}-${m}`}
+                                        onMouseEnter={(e) => handleItemMouseEnter(prov.id, m, e)}
+                                        onMouseLeave={handleItemMouseLeave}
+                                        onClick={() => handleSelectModel(prov.id, m)}
+                                        className={cn(
+                                          "group relative flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[12px] font-mono text-left transition-colors cursor-pointer select-none",
+                                          isSelected
+                                            ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
+                                            : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200",
+                                          isHovered && "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white",
+                                        )}
+                                      >
+                                        <span className="truncate flex-1 mr-1.5">{m}</span>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          {isSelected && (
+                                            <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                                          )}
+                                          <ChevronRightIcon className="size-3 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-700 dark:group-hover:text-zinc-300 transition-colors" />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          groupedModels.map((group) => (
+                            <div key={group.provider} className="space-y-0.5">
+                              <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+                                {group.provider}
+                              </div>
+                              {group.models.map((m) => {
+                                const isSelected = currentModel === m;
+                                const isHovered = hoveredModel?.provId === null && hoveredModel?.model === m;
+                                return (
+                                  <div
+                                    key={m}
+                                    data-testid={`model-option-${m}`}
+                                    onMouseEnter={(e) => handleItemMouseEnter(null, m, e)}
+                                    onMouseLeave={handleItemMouseLeave}
+                                    onClick={() => handleSelectModel(null, m)}
+                                    className={cn(
+                                      "group relative flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[12px] font-mono text-left transition-colors cursor-pointer select-none",
+                                      isSelected
+                                        ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
+                                        : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200",
+                                      isHovered && "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white",
+                                    )}
+                                  >
+                                    <span className="truncate flex-1 mr-1.5">{m}</span>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {isSelected && (
+                                        <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                                      )}
+                                      <ChevronRightIcon className="size-3 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-700 dark:group-hover:text-zinc-300 transition-colors" />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
 
                 {onOpenSettings && (
                   <>
@@ -701,9 +803,9 @@ function PromptInputComposer({
 
                     <div className="space-y-0.5 my-1">
                       {REASONING_EFFORTS.map((eff) => {
-                        const modelSupportedEfforts = availableEffortsForModel(hoveredModel);
+                        const modelSupportedEfforts = availableEffortsForModel(hoveredModel.model);
                         const isSupported = !reasoningUnsupported && modelSupportedEfforts.includes(eff);
-                        const isCurrent = currentModel === hoveredModel && effort === eff;
+                        const isCurrent = currentModel === hoveredModel.model && effort === eff;
                         const label = eff === "high" ? "高 (high)" : eff === "medium" ? "中 (medium)" : "低 (low)";
                         const desc = eff === "high" ? "深度思考" : eff === "medium" ? "均衡推理" : "快速响应";
 
@@ -730,10 +832,8 @@ function PromptInputComposer({
                             data-testid={`effort-option-${eff}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onSelectModel?.(hoveredModel);
+                              handleSelectModel(hoveredModel.provId, hoveredModel.model);
                               onEffortChange(eff);
-                              setIsModelDropdownOpen(false);
-                              setHoveredModel(null);
                             }}
                             className={cn(
                               "flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11.5px] text-left transition-colors cursor-pointer",
@@ -828,6 +928,9 @@ export function ChatInput({
   availableModels = [],
   currentModel,
   onSelectModel,
+  providers = [],
+  activeProviderId,
+  onSelectProviderModel,
   onOpenSettings,
   workspaceRoot,
   customWorkspaces = [],
@@ -1319,6 +1422,9 @@ export function ChatInput({
                 setIsModelDropdownOpen={setIsModelDropdownOpen}
                 availableModels={availableModels}
                 onSelectModel={onSelectModel}
+                providers={providers}
+                activeProviderId={activeProviderId}
+                onSelectProviderModel={onSelectProviderModel}
                 onOpenSettings={onOpenSettings}
                 modelDropdownRef={modelDropdownRef}
                 messages={messages}

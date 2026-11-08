@@ -905,6 +905,9 @@ export function App() {
             availableModels={allAvailableModels}
             currentModelId={currentModelId ?? undefined}
             onSelectModel={(model: string) => settings.setActiveModelId(model)}
+            providers={settings.providers}
+            activeProviderId={settings.activeProviderId}
+            onSelectProviderModel={settings.selectProviderModel}
             modelStatus={modelStatus}
             modelStatusKind={modelStatusKind}
             permissionMode={permissionMode}
@@ -971,6 +974,9 @@ export function App() {
               availableModels={allAvailableModels}
               currentModelId={currentModelId ?? undefined}
               onSelectModel={(model: string) => settings.setActiveModelId(model)}
+              providers={settings.providers}
+              activeProviderId={settings.activeProviderId}
+              onSelectProviderModel={settings.selectProviderModel}
               modelStatus={modelStatus}
               modelStatusKind={modelStatusKind}
               permissionMode={permissionMode}
@@ -1052,6 +1058,12 @@ export function App() {
         onThemeModeChange={setThemeMode}
         computerUseEnabled={computerUseEnabled}
         onComputerUseEnabledChange={onComputerUseEnabledChange}
+        onStartOAuth={settings.startOAuthLogin}
+        onPollOAuth={settings.pollOAuthStatus}
+        onOAuthRefresh={settings.refreshOAuthToken}
+        onOAuthLogout={settings.logoutOAuth}
+        onFetchBalance={settings.fetchBalance}
+        onRefreshProviders={settings.refresh}
       />
     </div>
   );

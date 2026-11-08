@@ -63,6 +63,20 @@ public final class ProviderModels {
         private String createdAt;
         private String updatedAt;
 
+        // ===== 订阅登录（OAuth）扩展字段，持久化跟随 providers.json =====
+        /** 接入方式：api-key（默认）| oauth（订阅登录）。 */
+        private String authMode = "api-key";
+        /** 订阅登录提供方：openai | anthropic。 */
+        private String oauthProvider;
+        /** OAuth 刷新令牌（明文随 providers.json 落盘，与 apiKey 同级安全约束）。 */
+        private String refreshToken;
+        /** access token 过期时间（ISO-8601）。 */
+        private String tokenExpiresAt;
+        /** 订阅账号邮箱。 */
+        private String accountEmail;
+        /** 订阅套餐名（如 ChatGPT Plus / Claude Pro）。 */
+        private String planName;
+
         public ProviderConfig() {}
 
         public String getId() {
@@ -152,6 +166,54 @@ public final class ProviderModels {
         public void setUpdatedAt(String updatedAt) {
             this.updatedAt = updatedAt;
         }
+
+        public String getAuthMode() {
+            return authMode;
+        }
+
+        public void setAuthMode(String authMode) {
+            this.authMode = authMode;
+        }
+
+        public String getOauthProvider() {
+            return oauthProvider;
+        }
+
+        public void setOauthProvider(String oauthProvider) {
+            this.oauthProvider = oauthProvider;
+        }
+
+        public String getRefreshToken() {
+            return refreshToken;
+        }
+
+        public void setRefreshToken(String refreshToken) {
+            this.refreshToken = refreshToken;
+        }
+
+        public String getTokenExpiresAt() {
+            return tokenExpiresAt;
+        }
+
+        public void setTokenExpiresAt(String tokenExpiresAt) {
+            this.tokenExpiresAt = tokenExpiresAt;
+        }
+
+        public String getAccountEmail() {
+            return accountEmail;
+        }
+
+        public void setAccountEmail(String accountEmail) {
+            this.accountEmail = accountEmail;
+        }
+
+        public String getPlanName() {
+            return planName;
+        }
+
+        public void setPlanName(String planName) {
+            this.planName = planName;
+        }
     }
 
     /** 返回给前端的公共信息（已掩码 apiKey）。 */
@@ -169,6 +231,14 @@ public final class ProviderModels {
         private ReasoningCapabilities reasoning;
         private String createdAt;
         private String updatedAt;
+
+        // ===== 订阅登录状态与账号信息（不含明文令牌/刷新令牌） =====
+        private String authMode = "api-key";
+        private String oauthProvider;
+        private boolean hasRefreshToken;
+        private String tokenExpiresAt;
+        private String accountEmail;
+        private String planName;
 
         public PublicProvider() {}
 
@@ -267,6 +337,54 @@ public final class ProviderModels {
         public void setUpdatedAt(String updatedAt) {
             this.updatedAt = updatedAt;
         }
+
+        public String getAuthMode() {
+            return authMode;
+        }
+
+        public void setAuthMode(String authMode) {
+            this.authMode = authMode;
+        }
+
+        public String getOauthProvider() {
+            return oauthProvider;
+        }
+
+        public void setOauthProvider(String oauthProvider) {
+            this.oauthProvider = oauthProvider;
+        }
+
+        public boolean isHasRefreshToken() {
+            return hasRefreshToken;
+        }
+
+        public void setHasRefreshToken(boolean hasRefreshToken) {
+            this.hasRefreshToken = hasRefreshToken;
+        }
+
+        public String getTokenExpiresAt() {
+            return tokenExpiresAt;
+        }
+
+        public void setTokenExpiresAt(String tokenExpiresAt) {
+            this.tokenExpiresAt = tokenExpiresAt;
+        }
+
+        public String getAccountEmail() {
+            return accountEmail;
+        }
+
+        public void setAccountEmail(String accountEmail) {
+            this.accountEmail = accountEmail;
+        }
+
+        public String getPlanName() {
+            return planName;
+        }
+
+        public void setPlanName(String planName) {
+            this.planName = planName;
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -279,6 +397,26 @@ public final class ProviderModels {
         private String defaultModel;
         private boolean enabled = true;
         private ReasoningCapabilities reasoning;
+        /** 接入方式：api-key | oauth；为空表示沿用原值。 */
+        private String authMode;
+        /** OAuth 登录会话 ID（state）：保存时消费对应会话里换好的令牌。 */
+        private String oauthLoginId;
+
+        public String getOauthLoginId() {
+            return oauthLoginId;
+        }
+
+        public void setOauthLoginId(String oauthLoginId) {
+            this.oauthLoginId = oauthLoginId;
+        }
+
+        public String getAuthMode() {
+            return authMode;
+        }
+
+        public void setAuthMode(String authMode) {
+            this.authMode = authMode;
+        }
 
         public String getType() {
             return type;
@@ -367,6 +505,13 @@ public final class ProviderModels {
         p.setReasoning(config.getReasoning());
         p.setCreatedAt(config.getCreatedAt());
         p.setUpdatedAt(config.getUpdatedAt());
+        // 订阅登录状态与账号信息（绝不暴露 refreshToken / 明文令牌）
+        p.setAuthMode("oauth".equals(config.getAuthMode()) ? "oauth" : "api-key");
+        p.setOauthProvider(config.getOauthProvider());
+        p.setHasRefreshToken(config.getRefreshToken() != null && !config.getRefreshToken().trim().isEmpty());
+        p.setTokenExpiresAt(config.getTokenExpiresAt());
+        p.setAccountEmail(config.getAccountEmail());
+        p.setPlanName(config.getPlanName());
         return p;
     }
 }

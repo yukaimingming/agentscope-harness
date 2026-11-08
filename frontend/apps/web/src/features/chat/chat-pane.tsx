@@ -6,7 +6,7 @@
  * 人工审批栏与底部输入框，可以独立切换、运行各自的会话。
  */
 import { useMemo, useState } from "react";
-import type { Activity, PermissionMode, ReasoningEffort } from "@deepagent/shared";
+import type { Activity, PermissionMode, PublicProvider, ReasoningEffort } from "@deepagent/shared";
 import type { ClientState } from "./client-reducer.js";
 import { ChatMessages } from "./chat-messages.js";
 import { ChatInput } from "./chat-input.js";
@@ -37,6 +37,12 @@ export interface ChatPaneProps {
   availableModels: string[];
   currentModelId?: string;
   onSelectModel: (model: string) => void;
+  /** 所有已配置的模型厂商列表（按真实厂商分组选择模型） */
+  providers?: PublicProvider[];
+  /** 当前选中的厂商 ID */
+  activeProviderId?: string | null;
+  /** 按厂商与模型一键切换回调（同时切换厂商与模型） */
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
   modelStatus?: string;
   modelStatusKind?: "ok" | "warn" | "error";
   permissionMode: PermissionMode;
@@ -88,6 +94,9 @@ export function ChatPane({
   availableModels,
   currentModelId,
   onSelectModel,
+  providers = [],
+  activeProviderId,
+  onSelectProviderModel,
   modelStatus,
   modelStatusKind,
   permissionMode,
@@ -375,6 +384,9 @@ export function ChatPane({
           availableModels={availableModels}
           currentModel={currentModelId}
           onSelectModel={onSelectModel}
+          providers={providers}
+          activeProviderId={activeProviderId}
+          onSelectProviderModel={onSelectProviderModel}
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
           planEnabled={planEnabled}
