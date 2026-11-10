@@ -6,7 +6,7 @@
  * 人工审批栏与底部输入框，可以独立切换、运行各自的会话。
  */
 import { useMemo, useState } from "react";
-import type { Activity, PermissionMode, ReasoningEffort } from "@deepagent/shared";
+import type { Activity, PermissionMode, PublicProvider, ReasoningEffort } from "@deepagent/shared";
 import type { ClientState } from "./client-reducer.js";
 import { ChatMessages } from "./chat-messages.js";
 import { ChatInput } from "./chat-input.js";
@@ -71,6 +71,10 @@ export interface ChatPaneProps {
   /** 网络搜索开关：仅勾选时本轮运行才挂载 web_search 工具（参照 Maf Harness）。*/
   webSearch?: boolean;
   onWebSearchChange?: (value: boolean) => void;
+  /** 已配置的模型厂商列表（按厂商分组选择模型） */
+  providers?: PublicProvider[];
+  activeProviderId?: string | null;
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
 }
 
 export function ChatPane({
@@ -120,6 +124,9 @@ export function ChatPane({
   onPlanEnabledChange,
   webSearch,
   onWebSearchChange,
+  providers,
+  activeProviderId,
+  onSelectProviderModel,
 }: ChatPaneProps) {
   const latestTodoActivity = useMemo<Activity | null>(() => {
     const todos = state.activities.filter((activity) => activity.kind === "todo");
@@ -375,6 +382,9 @@ export function ChatPane({
           availableModels={availableModels}
           currentModel={currentModelId}
           onSelectModel={onSelectModel}
+          providers={providers}
+          activeProviderId={activeProviderId}
+          onSelectProviderModel={onSelectProviderModel}
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
           planEnabled={planEnabled}

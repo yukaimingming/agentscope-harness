@@ -374,16 +374,17 @@ export function App() {
   // 原始请求，运行实际使用 effortResolution.effort。
 
   const allAvailableModels = useMemo(() => {
-    if (settings.activeProvider?.models && settings.activeProvider.models.length > 0) {
-      return settings.activeProvider.models;
-    }
     const set = new Set<string>();
     for (const p of settings.providers) {
       if (p.enabled) {
         for (const m of p.models) set.add(m);
       }
     }
-    return Array.from(set);
+    if (set.size > 0) return Array.from(set);
+    if (settings.activeProvider?.models && settings.activeProvider.models.length > 0) {
+      return settings.activeProvider.models;
+    }
+    return [];
   }, [settings.activeProvider, settings.providers]);
 
   const canSend =
@@ -905,6 +906,9 @@ export function App() {
             availableModels={allAvailableModels}
             currentModelId={currentModelId ?? undefined}
             onSelectModel={(model: string) => settings.setActiveModelId(model)}
+            providers={settings.providers}
+            activeProviderId={settings.activeProviderId}
+            onSelectProviderModel={settings.selectProviderModel}
             modelStatus={modelStatus}
             modelStatusKind={modelStatusKind}
             permissionMode={permissionMode}
@@ -971,6 +975,9 @@ export function App() {
               availableModels={allAvailableModels}
               currentModelId={currentModelId ?? undefined}
               onSelectModel={(model: string) => settings.setActiveModelId(model)}
+              providers={settings.providers}
+              activeProviderId={settings.activeProviderId}
+              onSelectProviderModel={settings.selectProviderModel}
               modelStatus={modelStatus}
               modelStatusKind={modelStatusKind}
               permissionMode={permissionMode}

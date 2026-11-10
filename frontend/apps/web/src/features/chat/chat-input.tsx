@@ -52,8 +52,10 @@ import {
 import {
   REASONING_EFFORTS,
   availableEffortsForModel,
+  isTwoTierModel,
   type Activity,
   type PermissionMode,
+  type PublicProvider,
   type ReasoningEffort,
   type RunTokenUsage,
 } from "@deepagent/shared";
@@ -64,6 +66,88 @@ import { cn } from "../../lib/utils.js";
 import { extractFolderName } from "./use-sessions.js";
 import { ChatAttachmentGallery, ImagePreviewDialog, type ChatAttachment } from "./chat-attachments.js";
 import { TodoCard } from "./todo-card.js";
+
+/** 取指定提供商下某个模型实际支持的思考等级档位。 */
+function getModelSupportedEfforts(
+  modelName: string,
+  provider?: PublicProvider,
+  globalUnsupported?: boolean,
+): readonly ReasoningEffort[] {
+  if (provider?.reasoning?.unsupported || (globalUnsupported && !provider)) {
+    return [];
+  }
+  const modelEfforts = availableEffortsForModel(modelName);
+  if (isTwoTierModel(modelName)) {
+    return modelEfforts;
+  }
+  if (provider?.reasoning?.perModel?.[modelName]) {
+    return provider.reasoning.perModel[modelName];
+  }
+  if (provider?.reasoning?.efforts && provider.reasoning.efforts.length > 0) {
+    return provider.reasoning.efforts.filter((e) => modelEfforts.includes(e));
+  }
+  return modelEfforts;
+}
+
+/**
+ * 模型下拉的归并分组：按厂商 label 聚合（重复添加同名厂商时兜底合并为一个分组）。
+ */
+interface MergedProviderGroup {
+  /** 分组键（label），同 label 的配置必然聚进同一组 */
+  key: string;
+  /** 厂商标签（取自分组内第一个配置） */
+  label: string;
+  /** 分组内原始 provider 配置（保持后端返回顺序） */
+  providers: PublicProvider[];
+  /** 合并去重后的模型列表 */
+  models: string[];
+  /** 分组内存在多个不同 baseUrl 时用于标题栏区分展示（否则为 null） */
+  baseUrlNote: string | null;
+  /** 任一同名配置已配 Key 即算就绪 */
+  ready: boolean;
+}
+
+/** 按厂商 label 归并 providers：模型合并去重，baseUrl 不一致时生成区分标注。 */
+function mergeProviderGroups(providers: PublicProvider[]): MergedProviderGroup[] {
+  const groups: MergedProviderGroup[] = [];
+  const byLabel = new Map<string, MergedProviderGroup>();
+  for (const prov of providers) {
+    if (!prov.enabled || !prov.models || prov.models.length === 0) continue;
+    let group = byLabel.get(prov.label);
+    if (!group) {
+      group = { key: prov.label, label: prov.label, providers: [], models: [], baseUrlNote: null, ready: false };
+      byLabel.set(prov.label, group);
+      groups.push(group);
+    }
+    group.providers.push(prov);
+    for (const m of prov.models) {
+      if (!group.models.includes(m)) group.models.push(m);
+    }
+    group.ready = group.ready || prov.hasApiKey;
+  }
+  for (const group of groups) {
+    const baseUrls = [...new Set(group.providers.map((p) => p.baseUrl))];
+    if (baseUrls.length > 1) group.baseUrlNote = baseUrls.join(" · ");
+  }
+  return groups;
+}
+
+/**
+ * 归并分组内的模型点击时定位实际 provider：
+ * 优先当前 activeProviderId（须含该模型），其次该分组下第一个启用且已配 Key 的 provider。
+ */
+function resolveGroupModelProvider(
+  group: MergedProviderGroup,
+  model: string,
+  activeProviderId?: string | null,
+): PublicProvider {
+  const withModel = group.providers.filter((p) => p.models.includes(model));
+  const active = activeProviderId
+    ? withModel.find((p) => p.id === activeProviderId)
+    : undefined;
+  if (active) return active;
+  return withModel.find((p) => p.enabled && p.hasApiKey) ?? withModel[0] ?? group.providers[0]!;
+}
 
 export interface QueuedPrompt {
   id: string;
@@ -96,6 +180,12 @@ interface ChatInputProps {
   currentModel?: string | null;
   /** 切换模型回调 */
   onSelectModel?: (model: string) => void;
+  /** 所有已配置的模型厂商列表（用于按厂商分组选择模型） */
+  providers?: PublicProvider[];
+  /** 当前选中的厂商 ID */
+  activeProviderId?: string | null;
+  /** 按厂商与模型一键切换回调 */
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
   /** 打开模型设置模态框 */
   onOpenSettings?: () => void;
   /** 当前工作区根目录（若为空或 null 则为直接聊天模式） */
@@ -149,23 +239,6 @@ const PERMISSION_OPTIONS: Array<{
   },
 ];
 
-function inferProvider(modelId: string): string {
-  if (modelId.includes("/")) {
-    const prefix = modelId.split("/")[0]!;
-    return prefix.charAt(0).toUpperCase() + prefix.slice(1);
-  }
-  const lower = modelId.toLowerCase();
-  if (lower.startsWith("gpt") || lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("text-embedding")) return "OpenAI";
-  if (lower.startsWith("claude")) return "Anthropic";
-  if (lower.startsWith("deepseek")) return "DeepSeek";
-  if (lower.startsWith("step")) return "StepFun";
-  if (lower.startsWith("gemini")) return "Google";
-  if (lower.startsWith("qwen")) return "Qwen";
-  if (lower.startsWith("atria")) return "Atria";
-  if (lower.startsWith("glm")) return "Zhipu AI";
-  return "其他模型";
-}
-
 const ACCEPTED_ATTACHMENT_TYPES =
   "image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,application/xml,text/html,application/x-yaml,text/yaml";
 const MAX_ATTACHMENT_COUNT = 4;
@@ -214,6 +287,9 @@ interface PromptInputComposerProps {
   setIsModelDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
   availableModels: string[];
   onSelectModel?: (model: string) => void;
+  providers: PublicProvider[];
+  activeProviderId?: string | null;
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
   onOpenSettings?: () => void;
   modelDropdownRef: React.RefObject<HTMLDivElement | null>;
   messages: ChatMessage[];
@@ -266,6 +342,9 @@ function PromptInputComposer({
   setIsModelDropdownOpen,
   availableModels,
   onSelectModel,
+  providers,
+  activeProviderId,
+  onSelectProviderModel,
   onOpenSettings,
   modelDropdownRef,
   messages,
@@ -286,7 +365,10 @@ function PromptInputComposer({
   const attachments = usePromptInputAttachments();
   const hasContent = hasText || attachments.files.length > 0;
 
-  const [hoveredModel, setHoveredModel] = useState<string | null>(null);
+  const [hoveredModel, setHoveredModel] = useState<{
+    provId?: string;
+    model: string;
+  } | null>(null);
   const [submenuTop, setSubmenuTop] = useState<number>(0);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -305,7 +387,11 @@ function PromptInputComposer({
     };
   }, []);
 
-  const handleItemMouseEnter = (modelId: string, e: React.MouseEvent<HTMLElement>) => {
+  const handleModelMouseEnter = (
+    provId: string | undefined,
+    modelId: string,
+    e: React.MouseEvent<HTMLElement>,
+  ) => {
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
@@ -317,10 +403,10 @@ function PromptInputComposer({
       const maxTop = Math.max(0, parentRect.height - 130);
       setSubmenuTop(Math.min(Math.max(0, offset), maxTop));
     }
-    setHoveredModel(modelId);
+    setHoveredModel({ provId, model: modelId });
   };
 
-  const handleItemMouseLeave = () => {
+  const handleModelMouseLeave = () => {
     closeTimerRef.current = setTimeout(() => {
       setHoveredModel(null);
     }, 150);
@@ -338,21 +424,6 @@ function PromptInputComposer({
       setHoveredModel(null);
     }, 150);
   };
-
-  const groupedModels = useMemo(() => {
-    const groups: { provider: string; models: string[] }[] = [];
-    const map = new Map<string, string[]>();
-
-    for (const m of availableModels) {
-      const prov = inferProvider(m);
-      if (!map.has(prov)) {
-        map.set(prov, []);
-        groups.push({ provider: prov, models: map.get(prov)! });
-      }
-      map.get(prov)!.push(m);
-    }
-    return groups;
-  }, [availableModels]);
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -586,88 +657,248 @@ function PromptInputComposer({
                 setIsEffortDropdownOpen(false);
                 setIsPermissionDropdownOpen(false);
               }}
-              className="composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/70 dark:hover:text-white border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap shrink-0 cursor-pointer"
-              title={`当前模型：${currentModel || modelStatus}`}
+              className="composer-selector flex items-center gap-1.5 rounded-md bg-transparent px-2.5 py-1 text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 transition-colors dark:hover:bg-zinc-800/70 dark:hover:text-white border-0 border-none outline-none focus:outline-none shadow-none whitespace-nowrap shrink-0 cursor-pointer"
+              title={
+                reasoningUnsupported
+                  ? "点击切换模型（当前模型不支持调节思考等级）"
+                  : fallbackApplied
+                    ? `点击切换模型（当前模型不支持「${requestedEffort === "high" ? "高" : requestedEffort === "medium" ? "中" : "低"}」档位，已自动降级至「${effortLabel}」）`
+                    : `当前模型：${currentModel || modelStatus}`
+              }
             >
-              {/* 原有模型状态圆点 */}
+              {/* 模型状态圆点 */}
               <span className="size-1.5 rounded-full bg-emerald-400 shrink-0" />
 
-              {/* 厂商/模型名 */}
-              <span className="font-mono truncate max-w-[160px] text-[11.5px] whitespace-nowrap">
+              {/* 模型名 */}
+              <span className="font-mono truncate max-w-[160px] sm:max-w-[220px] text-[11.5px] whitespace-nowrap">
                 {currentModel || modelStatus}
               </span>
+
+              {/* 思考等级降级指示圆点 */}
+              {fallbackApplied && (
+                <span
+                  className="size-1.5 rounded-full bg-amber-400 shrink-0"
+                  aria-label="推理强度已降级"
+                />
+              )}
 
               {/* 下拉箭头 */}
               <ChevronDownIcon
                 className={cn(
-                  "size-3 text-zinc-500 shrink-0 ml-0.5 transition-transform",
+                  "size-3 text-zinc-400 dark:text-zinc-500 shrink-0 ml-0.5 transition-transform",
                   isModelDropdownOpen && "rotate-180"
                 )}
               />
             </button>
 
-            {/* 模型列表下拉主面板 */}
+            {/* 弹出式合并下拉面板（按厂商分组展示模型列表，悬停右侧滑出思考等级子菜单） */}
             {isModelDropdownOpen && (
               <div
                 ref={menuPanelRef}
-                className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-64 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#242427] text-zinc-900 dark:text-zinc-100 p-1.5 shadow-xl dark:shadow-2xl animate-in fade-in zoom-in-95 duration-100 overflow-visible"
+                data-testid="model-selector-dropdown"
+                className="workspace-dropdown-panel composer-menu absolute bottom-full mb-2 left-0 z-50 w-72 sm:w-80 rounded-xl border border-zinc-200 bg-white text-zinc-800 shadow-2xl dark:border-zinc-800 dark:bg-[#242427] dark:text-zinc-100 p-1.5 animate-in fade-in zoom-in-95 duration-100 overflow-visible"
               >
-                <div className="px-2 py-1 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                  <span>模型</span>
-                  {availableModels.length > 0 && <span>({availableModels.length})</span>}
-                </div>
+                {(() => {
+                  const mergedGroups = mergeProviderGroups(providers);
+                  const totalGroupedModels = mergedGroups.reduce(
+                    (acc, g) => acc + g.models.length,
+                    0
+                  );
 
-                <div className="max-h-56 overflow-y-auto space-y-2 my-1 scrollbar-thin scrollbar-thumb-zinc-700">
-                  {availableModels.length === 0 ? (
-                    <div className="px-2 py-2 text-[11.5px] text-zinc-500 text-center">
-                      暂无可用模型，请在设置中配置
-                    </div>
-                  ) : (
-                    groupedModels.map((group) => (
-                      <div key={group.provider} className="space-y-0.5">
-                        <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                          {group.provider}
-                        </div>
-                        {group.models.map((m) => {
-                          const isSelected = currentModel === m;
-                          const isHovered = hoveredModel === m;
-                          return (
-                            <div
-                              key={m}
-                              data-testid={`model-option-${m}`}
-                              onMouseEnter={(e) => handleItemMouseEnter(m, e)}
-                              onMouseLeave={handleItemMouseLeave}
-                              onClick={() => {
-                                onSelectModel?.(m);
-                                setIsModelDropdownOpen(false);
-                                setHoveredModel(null);
-                              }}
-                              className={cn(
-                                "group relative flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[12px] font-mono text-left transition-colors cursor-pointer select-none",
-                                isSelected
-                                  ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
-                                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200",
-                                isHovered && "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white"
-                              )}
-                            >
-                              <span className="truncate flex-1 mr-1.5">{m}</span>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {isSelected && (
-                                  <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0" />
-                                )}
-                                <ChevronRightIcon className="size-3 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-700 dark:group-hover:text-zinc-300 transition-colors" />
-                              </div>
-                            </div>
-                          );
-                        })}
+                  return (
+                    <>
+                      <div className="px-2 py-1 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center justify-between">
+                        <span>模型</span>
+                        {(totalGroupedModels > 0 || availableModels.length > 0) && (
+                          <span className="font-normal text-[10.5px]">
+                            {mergedGroups.length > 0
+                              ? `${mergedGroups.length} 厂商 · ${totalGroupedModels} 模型`
+                              : `${availableModels.length} 模型`}
+                          </span>
+                        )}
                       </div>
-                    ))
-                  )}
-                </div>
+
+                      <div className="max-h-72 overflow-y-auto space-y-2 my-1 pr-0.5 scrollbar-thin scrollbar-thumb-zinc-700">
+                        {mergedGroups.length > 0 ? (
+                          mergedGroups.map((group) => {
+                            const primary = group.providers[0]!;
+                            const isCurrentProvider = group.providers.some(
+                              (p) => p.id === activeProviderId
+                            );
+                            return (
+                              <div
+                                key={group.key}
+                                data-testid={`provider-group-${primary.id}`}
+                                className="space-y-0.5"
+                              >
+                                {/* 厂商分组标题栏（同 label 多配置已归并；baseUrl 不一致时附加标注区分） */}
+                                <div className="flex items-center justify-between gap-1 px-2 py-1 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/80 dark:bg-zinc-900/50 rounded-md">
+                                  <span className="truncate min-w-0">
+                                    {group.label}
+                                    {group.baseUrlNote && (
+                                      <span
+                                        className="ml-1 text-[9.5px] font-normal text-zinc-400 dark:text-zinc-500"
+                                        title={group.baseUrlNote}
+                                      >
+                                        ({group.baseUrlNote})
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "text-[10px] px-1.5 py-0.2 rounded font-normal shrink-0",
+                                      isCurrentProvider
+                                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium"
+                                        : group.ready
+                                          ? "bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                                          : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                                    )}
+                                  >
+                                    {isCurrentProvider ? "当前厂商" : group.ready ? "已就绪" : "未填 Key"}
+                                  </span>
+                                </div>
+
+                                {/* 模型单列列表 */}
+                                <div className="space-y-0.5 pl-1">
+                                  {group.models.map((m) => {
+                                    const modelProv = resolveGroupModelProvider(
+                                      group,
+                                      m,
+                                      activeProviderId
+                                    );
+                                    const isSelected = isCurrentProvider && currentModel === m;
+                                    const isHovered =
+                                      hoveredModel?.provId === modelProv.id && hoveredModel?.model === m;
+
+                                    return (
+                                      <div
+                                        key={`${modelProv.id}:${m}`}
+                                        data-testid={`model-option-${modelProv.id}-${m}`}
+                                        role="button"
+                                        tabIndex={0}
+                                        onMouseEnter={(e) => handleModelMouseEnter(modelProv.id, m, e)}
+                                        onMouseLeave={handleModelMouseLeave}
+                                        onClick={() => {
+                                          if (onSelectProviderModel) {
+                                            onSelectProviderModel(modelProv.id, m);
+                                          } else {
+                                            onSelectModel?.(m);
+                                          }
+                                          setIsModelDropdownOpen(false);
+                                          setHoveredModel(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            if (onSelectProviderModel) {
+                                              onSelectProviderModel(modelProv.id, m);
+                                            } else {
+                                              onSelectModel?.(m);
+                                            }
+                                            setIsModelDropdownOpen(false);
+                                            setHoveredModel(null);
+                                          }
+                                        }}
+                                        className={cn(
+                                          "group/item flex items-center justify-between px-2.5 py-1.5 rounded-md text-[12px] font-mono text-left cursor-pointer transition-colors select-none",
+                                          isSelected
+                                            ? "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white font-medium"
+                                            : isHovered
+                                              ? "bg-zinc-100/70 text-zinc-900 dark:bg-[#2a2a2f] dark:text-zinc-100"
+                                              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-100"
+                                        )}
+                                      >
+                                        <span className="truncate">{m}</span>
+
+                                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                                          {isSelected && (
+                                            <CheckIcon className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                                          )}
+                                          <ChevronRightIcon
+                                            className={cn(
+                                              "size-3 transition-colors",
+                                              isHovered
+                                                ? "text-zinc-600 dark:text-zinc-200"
+                                                : "text-zinc-400/60 dark:text-zinc-500/60 group-hover/item:text-zinc-600 dark:group-hover/item:text-zinc-300"
+                                            )}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : availableModels.length === 0 ? (
+                          <div className="px-2 py-2 text-[11.5px] text-zinc-500 text-center">
+                            暂无可用模型，请在设置中配置
+                          </div>
+                        ) : (
+                          /* availableModels 兜底 */
+                          <div className="space-y-0.5">
+                            {availableModels.map((m) => {
+                              const isSelected = currentModel === m;
+                              const isHovered =
+                                hoveredModel?.model === m && !hoveredModel?.provId;
+
+                              return (
+                                <div
+                                  key={m}
+                                  data-testid={`model-option-${m}`}
+                                  role="button"
+                                  tabIndex={0}
+                                  onMouseEnter={(e) => handleModelMouseEnter(undefined, m, e)}
+                                  onMouseLeave={handleModelMouseLeave}
+                                  onClick={() => {
+                                    onSelectModel?.(m);
+                                    setIsModelDropdownOpen(false);
+                                    setHoveredModel(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      onSelectModel?.(m);
+                                      setIsModelDropdownOpen(false);
+                                      setHoveredModel(null);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "group/item flex items-center justify-between px-2.5 py-1.5 rounded-md text-[12px] font-mono text-left cursor-pointer transition-colors select-none",
+                                    isSelected
+                                      ? "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white font-medium"
+                                      : isHovered
+                                        ? "bg-zinc-100/70 text-zinc-900 dark:bg-[#2a2a2f] dark:text-zinc-100"
+                                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-100"
+                                  )}
+                                >
+                                  <span className="truncate">{m}</span>
+
+                                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                                    {isSelected && (
+                                      <CheckIcon className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                                    )}
+                                    <ChevronRightIcon
+                                      className={cn(
+                                        "size-3 transition-colors",
+                                        isHovered
+                                          ? "text-zinc-600 dark:text-zinc-200"
+                                          : "text-zinc-400/60 dark:text-zinc-500/60 group-hover/item:text-zinc-600 dark:group-hover/item:text-zinc-300"
+                                      )}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
 
                 {onOpenSettings && (
-                  <>
-                    <div role="separator" className="my-1 h-px bg-zinc-200 dark:bg-zinc-700/70" />
+                  <div className="pt-1 border-t border-zinc-200 dark:border-zinc-800/80">
                     <button
                       type="button"
                       onClick={() => {
@@ -675,15 +906,15 @@ function PromptInputComposer({
                         setHoveredModel(null);
                         onOpenSettings();
                       }}
-                      className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[11.5px] text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-800/60 rounded transition-colors cursor-pointer"
+                      className="flex w-full items-center gap-1.5 px-2 py-1 text-[11.5px] text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-900 rounded transition-colors cursor-pointer"
                     >
                       <SettingsIcon className="size-3 text-zinc-500" />
                       <span>管理模型与提供商...</span>
                     </button>
-                  </>
+                  </div>
                 )}
 
-                {/* 右侧滑出：推理等级子菜单 */}
+                {/* 鼠标悬停模型项时向右滑出的推理等级次级子菜单 */}
                 {hoveredModel && (
                   <div
                     data-testid="effort-submenu"
@@ -692,67 +923,108 @@ function PromptInputComposer({
                     style={{ top: Math.max(0, submenuTop) }}
                     className="absolute left-[calc(100%+4px)] z-50 w-44 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#242427] text-zinc-900 dark:text-zinc-100 p-1.5 shadow-xl dark:shadow-2xl animate-in fade-in zoom-in-95 duration-100 before:absolute before:-left-2 before:top-0 before:bottom-0 before:w-2"
                   >
-                    <div className="px-2 py-1 text-[10.5px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <BrainIcon className="size-3 text-zinc-400" />
-                        <span>推理等级</span>
-                      </div>
+                    <div className="px-2 py-1 text-[10.5px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800/60 pb-1 mb-1">
+                      <span className="flex items-center gap-1">
+                        <BrainIcon className="size-3 text-zinc-400 shrink-0" />
+                        <span>思考等级</span>
+                      </span>
+                      <span className="font-mono text-[10px] text-zinc-400 truncate max-w-[70px]">
+                        {hoveredModel.model}
+                      </span>
                     </div>
 
-                    <div className="space-y-0.5 my-1">
-                      {REASONING_EFFORTS.map((eff) => {
-                        const modelSupportedEfforts = availableEffortsForModel(hoveredModel);
-                        const isSupported = !reasoningUnsupported && modelSupportedEfforts.includes(eff);
-                        const isCurrent = currentModel === hoveredModel && effort === eff;
-                        const label = eff === "high" ? "高 (high)" : eff === "medium" ? "中 (medium)" : "低 (low)";
-                        const desc = eff === "high" ? "深度思考" : eff === "medium" ? "均衡推理" : "快速响应";
+                    <div className="space-y-0.5">
+                      {REASONING_EFFORTS.map((opt) => {
+                        const isHoveredModelActive =
+                          (hoveredModel.provId ? hoveredModel.provId === activeProviderId : true) &&
+                          currentModel === hoveredModel.model;
 
-                        if (!isSupported) {
+                        const activeProvObj = hoveredModel.provId
+                          ? providers.find((p) => p.id === hoveredModel.provId)
+                          : undefined;
+
+                        const modelSupported = isHoveredModelActive
+                          ? (reasoningUnsupported ? [] : supportedEfforts)
+                          : getModelSupportedEfforts(
+                              hoveredModel.model,
+                              activeProvObj,
+                              reasoningUnsupported
+                            );
+
+                        const supported = modelSupported.includes(opt);
+                        const isSelected = isHoveredModelActive && effort === opt;
+                        const optTitle =
+                          opt === "high" ? "高 (high)" : opt === "medium" ? "中 (medium)" : "低 (low)";
+                        const optDesc =
+                          opt === "high" ? "深度思考" : opt === "medium" ? "均衡推理" : "快速响应";
+
+                        if (!supported) {
                           return (
-                            <button
-                              key={eff}
-                              type="button"
-                              disabled
-                              data-testid={`effort-option-${eff}`}
-                              className="flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11.5px] text-zinc-400 dark:text-zinc-600 cursor-not-allowed select-none opacity-50"
-                              title="该模型不支持此档位"
+                            <div
+                              key={opt}
+                              data-testid={`effort-option-${opt}`}
+                              className="flex items-center justify-between px-2 py-1.5 rounded-md text-[11.5px] text-zinc-400 dark:text-zinc-600 cursor-not-allowed select-none line-through opacity-50"
+                              title="当前模型不支持此档位"
                             >
-                              <span>{label}</span>
-                              <span className="text-[10px] text-zinc-400 dark:text-zinc-600">不支持</span>
-                            </button>
+                              <span>{optTitle}</span>
+                              <span className="text-[9.5px] font-normal no-underline">不支持</span>
+                            </div>
                           );
                         }
 
                         return (
                           <button
-                            key={eff}
+                            key={opt}
                             type="button"
-                            data-testid={`effort-option-${eff}`}
+                            data-testid={`effort-option-${opt}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onSelectModel?.(hoveredModel);
-                              onEffortChange(eff);
+                              if (!isHoveredModelActive) {
+                                if (hoveredModel.provId && onSelectProviderModel) {
+                                  onSelectProviderModel(hoveredModel.provId, hoveredModel.model);
+                                } else {
+                                  onSelectModel?.(hoveredModel.model);
+                                }
+                              }
+                              onEffortChange(opt);
                               setIsModelDropdownOpen(false);
                               setHoveredModel(null);
                             }}
                             className={cn(
-                              "flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11.5px] text-left transition-colors cursor-pointer",
-                              isCurrent
-                                ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
-                                : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200"
+                              "flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[11.5px] text-left transition-colors cursor-pointer",
+                              isSelected
+                                ? "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white font-medium"
+                                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-100"
                             )}
                           >
-                            <div className="flex flex-col">
-                              <span className="font-medium">{label}</span>
-                              <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-normal">{desc}</span>
+                            <div className="flex flex-col min-w-0">
+                              <span className="truncate">{optTitle}</span>
+                              <span className="text-[9.5px] text-zinc-400 dark:text-zinc-500 font-normal">
+                                {optDesc}
+                              </span>
                             </div>
-                            {isCurrent && (
+                            {isSelected && (
                               <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0 ml-1" />
                             )}
                           </button>
                         );
                       })}
                     </div>
+
+                    {/* 降级提示（针对当前选中的模型） */}
+                    {(() => {
+                      const isHoveredModelActive =
+                        (hoveredModel.provId ? hoveredModel.provId === activeProviderId : true) &&
+                        currentModel === hoveredModel.model;
+                      if (isHoveredModelActive && fallbackApplied) {
+                        return (
+                          <div className="mt-1 pt-1 border-t border-zinc-100 dark:border-zinc-800 text-[9.5px] leading-tight text-amber-600 dark:text-amber-400/90 px-1">
+                            已降级至「{effortLabel}」
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 )}
               </div>
@@ -828,6 +1100,9 @@ export function ChatInput({
   availableModels = [],
   currentModel,
   onSelectModel,
+  providers = [],
+  activeProviderId,
+  onSelectProviderModel,
   onOpenSettings,
   workspaceRoot,
   customWorkspaces = [],
@@ -1319,6 +1594,9 @@ export function ChatInput({
                 setIsModelDropdownOpen={setIsModelDropdownOpen}
                 availableModels={availableModels}
                 onSelectModel={onSelectModel}
+                providers={providers}
+                activeProviderId={activeProviderId}
+                onSelectProviderModel={onSelectProviderModel}
                 onOpenSettings={onOpenSettings}
                 modelDropdownRef={modelDropdownRef}
                 messages={messages}
