@@ -174,32 +174,33 @@ export function ConversationTurnNavigator({
           style={{ top: `${previewTop}px` }}
           className={cn(
             "turn-navigator-preview-card pointer-events-none absolute left-full z-50 ml-2.5 w-[300px] sm:w-[340px] -translate-y-1/2 rounded-2xl border px-4 py-3.5 text-left transition-all duration-150 animate-in fade-in zoom-in-95",
-            "bg-[#1c1c1f] border-zinc-800/90 text-zinc-100 shadow-[0_16px_36px_rgba(0,0,0,0.55)]",
+            "bg-white border-zinc-200/90 text-zinc-900 shadow-xl",
+            "dark:bg-[#1c1c1f] dark:border-zinc-800/90 dark:text-zinc-100 dark:shadow-[0_16px_36px_rgba(0,0,0,0.55)]",
           )}
         >
           {/* 1. 顶部：用户消息标题 */}
-          <div className="turn-preview-title truncate text-[14px] font-semibold leading-snug text-white mb-1.5">
+          <div className="turn-preview-title truncate text-[14px] font-semibold leading-snug text-zinc-900 dark:text-white mb-1.5">
             {hoveredTurn.prompt}
           </div>
 
           {/* 2. 中部：助手回复内容摘要（最多 3 行截断） */}
           {hoveredTurn.replyPreview ? (
-            <div className="turn-preview-body line-clamp-3 break-words text-[12.5px] leading-[1.6] text-zinc-300 mb-3">
+            <div className="turn-preview-body line-clamp-3 break-words text-[12.5px] leading-[1.6] text-zinc-600 dark:text-zinc-300 mb-3">
               {hoveredTurn.replyPreview}
             </div>
           ) : (
-            <div className="turn-preview-body text-[12.5px] leading-[1.6] text-zinc-500 mb-3">
+            <div className="turn-preview-body text-[12.5px] leading-[1.6] text-zinc-400 dark:text-zinc-500 mb-3">
               暂无回复内容
             </div>
           )}
 
           {/* 3. 底部：左侧回合进度 (如 23 of 23) + 右侧完整日期时间 (如 2026年10月28日 10:12) */}
-          <div className="turn-preview-footer flex items-center justify-between gap-3 text-[12px] font-medium leading-none text-zinc-400">
-            <span className="tabular-nums font-semibold text-zinc-200">
+          <div className="turn-preview-footer flex items-center justify-between gap-3 text-[12px] font-medium leading-none text-zinc-500 dark:text-zinc-400">
+            <span className="tabular-nums font-semibold text-zinc-800 dark:text-zinc-200">
               {hoveredIndex + 1} of {items.length}
             </span>
             {hoveredTurn.dateTime && (
-              <span className="tabular-nums font-medium text-zinc-400">
+              <span className="tabular-nums font-medium text-zinc-500 dark:text-zinc-400">
                 {hoveredTurn.dateTime}
               </span>
             )}
