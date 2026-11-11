@@ -231,7 +231,7 @@ pnpm --filter @deepagent/web dev --host 127.0.0.1 --port 5174
 ```text
 agentscope-harness/
 ├── backend/                              # Spring Boot 3 后端工程
-│   ├── pom.xml                           # Spring Boot 3.4.3 + AgentScope Harness 2.0.3
+│   ├── pom.xml                           # Spring Boot 3.4.3 + AgentScope Harness 2.0.4
 │   └── src/main/java/com/agentscope/harness/
 │       ├── AgentScopeApplication.java    # 启动主类
 │       ├── config/                       # 配置属性与跨域 WebConfig

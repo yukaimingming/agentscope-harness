@@ -35,7 +35,7 @@ public class HealthController {
     public ResponseEntity<Map<String, Object>> health() {
         return ResponseEntity.ok(Map.of(
                 "status", "ok",
-                "framework", "AgentScope Harness 2.0.3 (Spring Boot 3)",
+                "framework", "AgentScope Harness " + io.agentscope.core.Version.VERSION + " (Spring Boot 3)",
                 "startedAt", startedAt.toString(),
                 "workspaceRoot", workspaceService.getCurrentWorkspaceRoot(),
                 "defaultModel", properties.getDefaultModel(),
