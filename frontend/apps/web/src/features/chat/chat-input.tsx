@@ -184,7 +184,7 @@ interface ChatInputProps {
   providers?: PublicProvider[];
   /** 当前选中的厂商 ID */
   activeProviderId?: string | null;
-  /** 按厂商与模型一键切换回调 */
+  /** 按厂商与模型一键切换回调（同时切换厂商与模型） */
   onSelectProviderModel?: (providerId: string, modelId: string) => void;
   /** 打开模型设置模态框 */
   onOpenSettings?: () => void;
@@ -287,8 +287,11 @@ interface PromptInputComposerProps {
   setIsModelDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
   availableModels: string[];
   onSelectModel?: (model: string) => void;
+  /** 所有已配置的模型厂商列表（用于按厂商分组选择模型） */
   providers: PublicProvider[];
+  /** 当前选中的厂商 ID */
   activeProviderId?: string | null;
+  /** 按厂商与模型一键切换回调（同时切换厂商与模型） */
   onSelectProviderModel?: (providerId: string, modelId: string) => void;
   onOpenSettings?: () => void;
   modelDropdownRef: React.RefObject<HTMLDivElement | null>;
@@ -366,7 +369,7 @@ function PromptInputComposer({
   const hasContent = hasText || attachments.files.length > 0;
 
   const [hoveredModel, setHoveredModel] = useState<{
-    provId?: string;
+    provId?: string | null;
     model: string;
   } | null>(null);
   const [submenuTop, setSubmenuTop] = useState<number>(0);
@@ -388,7 +391,7 @@ function PromptInputComposer({
   }, []);
 
   const handleModelMouseEnter = (
-    provId: string | undefined,
+    provId: string | null | undefined,
     modelId: string,
     e: React.MouseEvent<HTMLElement>,
   ) => {
@@ -425,6 +428,19 @@ function PromptInputComposer({
     }, 150);
   };
 
+  /**
+   * 统一选择模型：带厂商上下文时同时切换厂商与模型（避免用 A 厂商的
+   * 密钥/端点请求 B 厂商的模型），无厂商分组时保持仅切模型的旧行为。
+   */
+  const handleSelectModel = (provId: string | null | undefined, modelId: string) => {
+    if (provId && onSelectProviderModel) {
+      onSelectProviderModel(provId, modelId);
+    } else {
+      onSelectModel?.(modelId);
+    }
+    setIsModelDropdownOpen(false);
+    setHoveredModel(null);
+  };
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       if (e.ctrlKey || e.metaKey) {
@@ -778,25 +794,11 @@ function PromptInputComposer({
                                         tabIndex={0}
                                         onMouseEnter={(e) => handleModelMouseEnter(modelProv.id, m, e)}
                                         onMouseLeave={handleModelMouseLeave}
-                                        onClick={() => {
-                                          if (onSelectProviderModel) {
-                                            onSelectProviderModel(modelProv.id, m);
-                                          } else {
-                                            onSelectModel?.(m);
-                                          }
-                                          setIsModelDropdownOpen(false);
-                                          setHoveredModel(null);
-                                        }}
+                                        onClick={() => handleSelectModel(modelProv.id, m)}
                                         onKeyDown={(e) => {
                                           if (e.key === "Enter" || e.key === " ") {
                                             e.preventDefault();
-                                            if (onSelectProviderModel) {
-                                              onSelectProviderModel(modelProv.id, m);
-                                            } else {
-                                              onSelectModel?.(m);
-                                            }
-                                            setIsModelDropdownOpen(false);
-                                            setHoveredModel(null);
+                                            handleSelectModel(modelProv.id, m);
                                           }
                                         }}
                                         className={cn(
@@ -848,19 +850,13 @@ function PromptInputComposer({
                                   data-testid={`model-option-${m}`}
                                   role="button"
                                   tabIndex={0}
-                                  onMouseEnter={(e) => handleModelMouseEnter(undefined, m, e)}
+                                  onMouseEnter={(e) => handleModelMouseEnter(null, m, e)}
                                   onMouseLeave={handleModelMouseLeave}
-                                  onClick={() => {
-                                    onSelectModel?.(m);
-                                    setIsModelDropdownOpen(false);
-                                    setHoveredModel(null);
-                                  }}
+                                  onClick={() => handleSelectModel(null, m)}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
-                                      onSelectModel?.(m);
-                                      setIsModelDropdownOpen(false);
-                                      setHoveredModel(null);
+                                      handleSelectModel(null, m);
                                     }
                                   }}
                                   className={cn(
@@ -933,77 +929,55 @@ function PromptInputComposer({
                       </span>
                     </div>
 
-                    <div className="space-y-0.5">
-                      {REASONING_EFFORTS.map((opt) => {
-                        const isHoveredModelActive =
+                    <div className="space-y-0.5 my-1">
+                      {REASONING_EFFORTS.map((eff) => {
+                        const modelSupportedEfforts = availableEffortsForModel(hoveredModel.model);
+                        const isSupported = !reasoningUnsupported && modelSupportedEfforts.includes(eff);
+                        const isCurrent =
                           (hoveredModel.provId ? hoveredModel.provId === activeProviderId : true) &&
-                          currentModel === hoveredModel.model;
+                          currentModel === hoveredModel.model &&
+                          effort === eff;
+                        const label = eff === "high" ? "高 (high)" : eff === "medium" ? "中 (medium)" : "低 (low)";
+                        const desc = eff === "high" ? "深度思考" : eff === "medium" ? "均衡推理" : "快速响应";
 
-                        const activeProvObj = hoveredModel.provId
-                          ? providers.find((p) => p.id === hoveredModel.provId)
-                          : undefined;
-
-                        const modelSupported = isHoveredModelActive
-                          ? (reasoningUnsupported ? [] : supportedEfforts)
-                          : getModelSupportedEfforts(
-                              hoveredModel.model,
-                              activeProvObj,
-                              reasoningUnsupported
-                            );
-
-                        const supported = modelSupported.includes(opt);
-                        const isSelected = isHoveredModelActive && effort === opt;
-                        const optTitle =
-                          opt === "high" ? "高 (high)" : opt === "medium" ? "中 (medium)" : "低 (low)";
-                        const optDesc =
-                          opt === "high" ? "深度思考" : opt === "medium" ? "均衡推理" : "快速响应";
-
-                        if (!supported) {
+                        if (!isSupported) {
                           return (
-                            <div
-                              key={opt}
-                              data-testid={`effort-option-${opt}`}
-                              className="flex items-center justify-between px-2 py-1.5 rounded-md text-[11.5px] text-zinc-400 dark:text-zinc-600 cursor-not-allowed select-none line-through opacity-50"
-                              title="当前模型不支持此档位"
+                            <button
+                              key={eff}
+                              type="button"
+                              disabled
+                              data-testid={`effort-option-${eff}`}
+                              className="flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11.5px] text-zinc-400 dark:text-zinc-600 cursor-not-allowed select-none opacity-50"
+                              title="该模型不支持此档位"
                             >
-                              <span>{optTitle}</span>
-                              <span className="text-[9.5px] font-normal no-underline">不支持</span>
-                            </div>
+                              <span>{label}</span>
+                              <span className="text-[10px] text-zinc-400 dark:text-zinc-600">不支持</span>
+                            </button>
                           );
                         }
 
                         return (
                           <button
-                            key={opt}
+                            key={eff}
                             type="button"
-                            data-testid={`effort-option-${opt}`}
+                            data-testid={`effort-option-${eff}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (!isHoveredModelActive) {
-                                if (hoveredModel.provId && onSelectProviderModel) {
-                                  onSelectProviderModel(hoveredModel.provId, hoveredModel.model);
-                                } else {
-                                  onSelectModel?.(hoveredModel.model);
-                                }
-                              }
-                              onEffortChange(opt);
-                              setIsModelDropdownOpen(false);
-                              setHoveredModel(null);
+                              handleSelectModel(hoveredModel.provId, hoveredModel.model);
+                              onEffortChange(eff);
                             }}
                             className={cn(
-                              "flex w-full items-center justify-between px-2 py-1.5 rounded-md text-[11.5px] text-left transition-colors cursor-pointer",
-                              isSelected
-                                ? "bg-zinc-100 text-zinc-900 dark:bg-[#2f2f35] dark:text-white font-medium"
-                                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-100"
+                              "flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11.5px] text-left transition-colors cursor-pointer",
+                              isCurrent
+                                ? "bg-zinc-100 text-zinc-900 font-medium dark:bg-[#2f2f35] dark:text-white"
+                                : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-[#2f2f35] dark:hover:text-zinc-200"
                             )}
                           >
-                            <div className="flex flex-col min-w-0">
-                              <span className="truncate">{optTitle}</span>
-                              <span className="text-[9.5px] text-zinc-400 dark:text-zinc-500 font-normal">
-                                {optDesc}
-                              </span>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{label}</span>
+                              <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-normal">{desc}</span>
                             </div>
-                            {isSelected && (
+                            {isCurrent && (
                               <CheckIcon className="size-3 text-emerald-500 dark:text-emerald-400 shrink-0 ml-1" />
                             )}
                           </button>
@@ -1076,7 +1050,7 @@ function PromptInputComposer({
             disabled={!hasText && attachments.files.length === 0 && !isRunning}
             status={isRunning ? "streaming" : undefined}
             onStop={onStop}
-            className="chat-submit-btn size-8 rounded-lg transition-colors shadow-none border-0 border-none outline-none focus:outline-none focus-visible:ring-0 bg-zinc-900 text-white hover:bg-black dark:bg-zinc-100 dark:text-black dark:hover:bg-white disabled:opacity-30 disabled:bg-zinc-200 disabled:text-zinc-400 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+            className="chat-submit-btn size-8 rounded-full transition-colors shadow-none"
           />
         )}
       </PromptInputFooter>

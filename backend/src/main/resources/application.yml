@@ -21,6 +21,10 @@ agentscope:
   mcp-keepalive-seconds: ${DEMO_MCP_KEEPALIVE_SECONDS:10}
   mcp-deepwiki-url: ${DEMO_MCP_DEEPWIKI_URL:https://mcp.deepwiki.com/mcp}
   thinking-expanded: ${DEMO_THINKING:false}
+  # Google 订阅登录凭据不入库（push protection 拦截 yml 明文）：仅经环境变量
+  # GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET 注入，未配置时 Google 登录不可用
+  oauth-google-client-id: ${GOOGLE_OAUTH_CLIENT_ID:}
+  oauth-google-client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET:}
 
 logging:
   level:

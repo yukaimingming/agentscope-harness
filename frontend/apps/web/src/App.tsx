@@ -1059,6 +1059,12 @@ export function App() {
         onThemeModeChange={setThemeMode}
         computerUseEnabled={computerUseEnabled}
         onComputerUseEnabledChange={onComputerUseEnabledChange}
+        onStartOAuth={settings.startOAuthLogin}
+        onPollOAuth={settings.pollOAuthStatus}
+        onOAuthRefresh={settings.refreshOAuthToken}
+        onOAuthLogout={settings.logoutOAuth}
+        onFetchBalance={settings.fetchBalance}
+        onRefreshProviders={settings.refresh}
       />
     </div>
   );

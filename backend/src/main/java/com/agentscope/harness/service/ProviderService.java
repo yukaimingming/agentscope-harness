@@ -144,6 +144,7 @@ public class ProviderService {
         cfg.setDefaultModel(input.getDefaultModel());
         cfg.setEnabled(input.isEnabled());
         cfg.setReasoning(input.getReasoning());
+        cfg.setAuthMode("oauth".equals(input.getAuthMode()) ? "oauth" : "api-key");
         cfg.setCreatedAt(Instant.now().toString());
         cfg.setUpdatedAt(Instant.now().toString());
 
@@ -166,8 +167,48 @@ public class ProviderService {
         if (patch.getDefaultModel() != null) existing.setDefaultModel(patch.getDefaultModel());
         existing.setEnabled(patch.isEnabled());
         if (patch.getReasoning() != null) existing.setReasoning(patch.getReasoning());
+        if (patch.getAuthMode() != null) {
+            existing.setAuthMode("oauth".equals(patch.getAuthMode()) ? "oauth" : "api-key");
+        }
         existing.setUpdatedAt(Instant.now().toString());
 
+        save();
+        return existing;
+    }
+
+    /**
+     * 把一次订阅登录（OAuth）拿到的令牌与账号信息落到指定厂商上：
+     * access token 直接写入现有 apiKey 字段，下游 OpenAIChatModel 调用链零改动。
+     */
+    public ProviderConfig applyOAuthToken(
+            String id, String oauthProvider, String accessToken, String refreshToken,
+            String tokenExpiresAt, String accountEmail, String planName) {
+        ProviderConfig existing = providers.get(id);
+        if (existing == null) return null;
+        existing.setApiKey(accessToken != null ? accessToken : "");
+        existing.setRefreshToken(refreshToken);
+        existing.setTokenExpiresAt(tokenExpiresAt);
+        existing.setAccountEmail(accountEmail);
+        existing.setPlanName(planName);
+        existing.setOauthProvider(oauthProvider);
+        existing.setAuthMode("oauth");
+        existing.setUpdatedAt(Instant.now().toString());
+        save();
+        return existing;
+    }
+
+    /** 清除订阅登录态：清空令牌与账号信息并回退为 API Key 模式。 */
+    public ProviderConfig clearOAuth(String id) {
+        ProviderConfig existing = providers.get(id);
+        if (existing == null) return null;
+        existing.setApiKey("");
+        existing.setRefreshToken(null);
+        existing.setTokenExpiresAt(null);
+        existing.setAccountEmail(null);
+        existing.setPlanName(null);
+        existing.setOauthProvider(null);
+        existing.setAuthMode("api-key");
+        existing.setUpdatedAt(Instant.now().toString());
         save();
         return existing;
     }
@@ -183,21 +224,42 @@ public class ProviderService {
 
     /**
      * 探测远程模型列表。
+     *
+     * @param prep 订阅登录厂商的调用准备（密钥/附加头/模型路径），由控制器用
+     *             OAuthService.prepareForCall 生成；API Key 厂商传 null
      */
-    public Map<String, Object> fetchModels(ProviderConfig provider) {
+    public Map<String, Object> fetchModels(ProviderConfig provider, OAuthService.CallPrep prep) {
         Map<String, Object> res = new HashMap<>();
+        String apiKey = provider.getApiKey();
+        Map<String, String> extraHeaders = Map.of();
+        if (prep != null) {
+            if (prep.blockedMessage() != null) {
+                res.put("ok", false);
+                res.put("errorKind", "unsupported");
+                res.put("message", prep.blockedMessage());
+                res.put("models", List.of());
+                return res;
+            }
+            apiKey = prep.apiKey() != null ? prep.apiKey() : apiKey;
+            extraHeaders = prep.extraHeaders() != null ? prep.extraHeaders() : Map.of();
+        }
         try {
             String baseUrl = provider.getBaseUrl().replaceAll("/+$", "");
-            String modelsUrl = baseUrl.endsWith("/v1") ? baseUrl + "/models" : baseUrl + "/v1/models";
+            String modelsUrl;
+            if (prep != null && prep.modelsPathOverride() != null) {
+                modelsUrl = baseUrl + prep.modelsPathOverride();
+            } else {
+                modelsUrl = baseUrl.endsWith("/v1") ? baseUrl + "/models" : baseUrl + "/v1/models";
+            }
 
-            HttpRequest req = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(modelsUrl))
-                    .header("Authorization", "Bearer " + provider.getApiKey())
+                    .header("Authorization", "Bearer " + apiKey)
                     .timeout(Duration.ofSeconds(15))
-                    .GET()
-                    .build();
+                    .GET();
+            extraHeaders.forEach(builder::header);
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 200) {
                 JsonNode root = objectMapper.readTree(resp.body());
                 List<String> list = new ArrayList<>();
@@ -229,10 +291,23 @@ public class ProviderService {
 
     /**
      * 简单测试大模型连通性。
+     *
+     * @param prep 订阅登录厂商的调用准备（密钥/附加头），API Key 厂商传 null
      */
-    public Map<String, Object> testModel(ProviderConfig provider, String modelId) {
+    public Map<String, Object> testModel(ProviderConfig provider, String modelId, OAuthService.CallPrep prep) {
         Map<String, Object> res = new HashMap<>();
         long startedAt = System.currentTimeMillis();
+        String apiKey = provider.getApiKey();
+        Map<String, String> extraHeaders = Map.of();
+        if (prep != null) {
+            if (prep.blockedMessage() != null) {
+                res.put("ok", false);
+                res.put("message", prep.blockedMessage());
+                return res;
+            }
+            apiKey = prep.apiKey() != null ? prep.apiKey() : apiKey;
+            extraHeaders = prep.extraHeaders() != null ? prep.extraHeaders() : Map.of();
+        }
         try {
             String baseUrl = provider.getBaseUrl().replaceAll("/+$", "");
             String chatUrl = baseUrl.endsWith("/v1") ? baseUrl + "/chat/completions" : baseUrl + "/v1/chat/completions";
@@ -243,15 +318,15 @@ public class ProviderService {
                     "max_tokens", 10
             ));
 
-            HttpRequest req = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(chatUrl))
-                    .header("Authorization", "Bearer " + provider.getApiKey())
+                    .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .timeout(Duration.ofSeconds(20))
-                    .POST(HttpRequest.BodyPublishers.ofString(reqBody))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(reqBody));
+            extraHeaders.forEach(builder::header);
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             long latency = System.currentTimeMillis() - startedAt;
             res.put("latencyMs", latency);
             res.put("modelId", modelId);

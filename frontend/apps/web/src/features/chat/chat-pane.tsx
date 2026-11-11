@@ -37,6 +37,12 @@ export interface ChatPaneProps {
   availableModels: string[];
   currentModelId?: string;
   onSelectModel: (model: string) => void;
+  /** 所有已配置的模型厂商列表（按真实厂商分组选择模型） */
+  providers?: PublicProvider[];
+  /** 当前选中的厂商 ID */
+  activeProviderId?: string | null;
+  /** 按厂商与模型一键切换回调（同时切换厂商与模型） */
+  onSelectProviderModel?: (providerId: string, modelId: string) => void;
   modelStatus?: string;
   modelStatusKind?: "ok" | "warn" | "error";
   permissionMode: PermissionMode;
@@ -71,10 +77,6 @@ export interface ChatPaneProps {
   /** 网络搜索开关：仅勾选时本轮运行才挂载 web_search 工具（参照 Maf Harness）。*/
   webSearch?: boolean;
   onWebSearchChange?: (value: boolean) => void;
-  /** 已配置的模型厂商列表（按厂商分组选择模型） */
-  providers?: PublicProvider[];
-  activeProviderId?: string | null;
-  onSelectProviderModel?: (providerId: string, modelId: string) => void;
 }
 
 export function ChatPane({
@@ -92,6 +94,9 @@ export function ChatPane({
   availableModels,
   currentModelId,
   onSelectModel,
+  providers = [],
+  activeProviderId,
+  onSelectProviderModel,
   modelStatus,
   modelStatusKind,
   permissionMode,
@@ -124,9 +129,6 @@ export function ChatPane({
   onPlanEnabledChange,
   webSearch,
   onWebSearchChange,
-  providers,
-  activeProviderId,
-  onSelectProviderModel,
 }: ChatPaneProps) {
   const latestTodoActivity = useMemo<Activity | null>(() => {
     const todos = state.activities.filter((activity) => activity.kind === "todo");

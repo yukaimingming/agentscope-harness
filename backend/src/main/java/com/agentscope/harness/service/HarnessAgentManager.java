@@ -8,7 +8,9 @@ import com.agentscope.harness.model.AguiMessage;
 import com.agentscope.harness.model.ProviderModels.ProviderConfig;
 import com.agentscope.harness.model.RunAgentInput;
 import com.agentscope.harness.model.RunAgentInput.ResumeEntry;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.ConfirmResult;
@@ -18,8 +20,11 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.message.UserMessage;
 import io.agentscope.core.model.ExecutionConfig;
+import io.agentscope.core.model.transport.HttpRequest;
+import io.agentscope.core.model.transport.HttpResponse;
 import io.agentscope.core.model.transport.HttpTransport;
 import io.agentscope.core.model.transport.HttpTransportConfig;
+import io.agentscope.core.model.transport.HttpTransportException;
 import io.agentscope.core.model.transport.JdkHttpTransport;
 import io.agentscope.core.state.InMemoryAgentStateStore;
 import io.agentscope.core.tool.Toolkit;
@@ -66,6 +71,8 @@ public class HarnessAgentManager {
     private final WebSearchTool webSearchTool;
     private final DiagramTool diagramTool;
     private final ObjectMapper objectMapper;
+    /** 订阅登录厂商的下游调用准备（密钥刷新/附加头/协议屏蔽）。 */
+    private final OAuthService oauthService;
 
     /** 线程活跃状态记录，用于取消与清理。 */
     private final Map<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
@@ -80,13 +87,15 @@ public class HarnessAgentManager {
                                WorkspaceService workspaceService,
                                WebSearchTool webSearchTool,
                                DiagramTool diagramTool,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               OAuthService oauthService) {
         this.properties = properties;
         this.providerService = providerService;
         this.workspaceService = workspaceService;
         this.webSearchTool = webSearchTool;
         this.diagramTool = diagramTool;
         this.objectMapper = objectMapper;
+        this.oauthService = oauthService;
     }
 
     /**
@@ -106,15 +115,33 @@ public class HarnessAgentManager {
         String providerId = forwardedProps.containsKey("providerId") ? String.valueOf(forwardedProps.get("providerId")) : null;
         ProviderConfig provider = providerService.getActive(providerId);
 
+        // 订阅登录厂商的下游调用准备：Copilot 动态 Bearer（过期自动换取）、
+        // Grok/Copilot 必需附加头、协议特殊厂商（Google 等）返回屏蔽原因
+        OAuthService.CallPrep callPrep = provider != null ? oauthService.prepareForCall(provider) : null;
+        Map<String, String> providerExtraHeaders = callPrep != null && callPrep.extraHeaders() != null
+                ? callPrep.extraHeaders()
+                : Map.of();
         String apiKey = (provider != null && provider.getApiKey() != null && !provider.getApiKey().isBlank())
-                ? provider.getApiKey()
+                ? (callPrep != null && callPrep.apiKey() != null && !callPrep.apiKey().isBlank()
+                        ? callPrep.apiKey()
+                        : provider.getApiKey())
                 : properties.getDefaultApiKey();
         String baseUrl = (provider != null && provider.getBaseUrl() != null && !provider.getBaseUrl().isBlank())
                 ? provider.getBaseUrl()
                 : properties.getDefaultBaseUrl();
-        String modelName = (provider != null && provider.getDefaultModel() != null && !provider.getDefaultModel().isBlank())
-                ? provider.getDefaultModel()
-                : properties.getDefaultModel();
+        // 模型解析优先级（参考姊妹项目 MafAgentManager 的 requestedModelId 优先逻辑）：
+        // 用户在输入框选择的 modelId（trim 后非空）> 厂商默认模型 > 全局默认模型。
+        // 此前只用 provider.getDefaultModel()，导致前端选择的非默认模型从不生效。
+        String requestedModelId = (forwardedProps.containsKey("modelId") && forwardedProps.get("modelId") != null)
+                ? String.valueOf(forwardedProps.get("modelId")).trim()
+                : null;
+        String modelName = (requestedModelId != null && !requestedModelId.isBlank())
+                ? requestedModelId
+                : (provider != null && provider.getDefaultModel() != null && !provider.getDefaultModel().isBlank()
+                        ? provider.getDefaultModel()
+                        : properties.getDefaultModel());
+        log.info("会话 [{}] 模型解析: providerId={}, 用户选择 modelId={}, 实际使用 modelName={}",
+                threadId, providerId, requestedModelId, modelName);
 
         // 构建 AG-UI 适配器
         AguiAdapter adapter = new AguiAdapter(runId, threadId, objectMapper, sseWriter, workspaceRoot);
@@ -124,6 +151,11 @@ public class HarnessAgentManager {
         Path desktopPidFile = null;
 
         try {
+            // 0. 订阅登录但协议特殊的厂商（如 Google Code Assist）：直接给出可读的失败原因
+            if (callPrep != null && callPrep.blockedMessage() != null) {
+                throw new IllegalStateException(callPrep.blockedMessage());
+            }
+
             // 1. 构建传输层与模型
             HttpTransportConfig transportConfig = HttpTransportConfig.builder()
                     .connectTimeout(Duration.ofSeconds(60))
@@ -134,6 +166,10 @@ public class HarnessAgentManager {
             HttpTransport transport = JdkHttpTransport.builder()
                     .config(transportConfig)
                     .build();
+            if (!providerExtraHeaders.isEmpty()) {
+                // 订阅登录厂商（Grok / Copilot）要求附加身份头：包一层透传装饰器，其余厂商零改动
+                transport = new HeaderInjectingTransport(transport, providerExtraHeaders, objectMapper);
+            }
 
             OpenAIChatModel model = OpenAIChatModel.builder()
                     .apiKey(apiKey)
@@ -215,6 +251,15 @@ public class HarnessAgentManager {
                     + (computerUseMounted ? computerUseRule : computerUseDisabledRule);
             if (planEnabled) {
                 baseSysPrompt += " 【计划模式约束】先输出实施计划，等用户确认后再执行。在用户未明确确认执行前，严禁直接调用写文件、执行终端命令等修改操作工具。";
+            }
+
+            // 运行时身份澄清：SDK 每轮会把工作区 MEMORY.md、memory/ 记忆以 <loaded_context> 注入
+            // system prompt，历史会话也可能残留过往模型的自述，导致模型被带偏自述错误身份。
+            // 明确告知：回答身份相关问题以运行时指定为准，不得依据历史记忆或过往对话自述。
+            if (modelName != null && !modelName.isBlank()) {
+                baseSysPrompt += " 【运行时身份澄清】当前会话使用的模型由系统在运行时指定，本次运行实际指定的模型型号为 "
+                        + modelName + "。当用户询问你的身份、模型型号或所属厂商时，必须以该运行时指定为准作答；"
+                        + "严禁根据历史记忆、过往对话或训练数据中的自述来回答身份问题。";
             }
 
             // 4. 构建 HarnessAgent
@@ -588,5 +633,82 @@ public class HarnessAgentManager {
             }
         }
         return messages.get(messages.size() - 1).getTextContent();
+    }
+
+    /**
+     * 透传传输层装饰器：为订阅登录厂商（Grok 的 X-XAI-Token-Auth 与 CLI 客户端身份头、
+     * Copilot 的 editor/copilot 系列头）的下游请求注入必需的附加头。普通 API Key 厂商
+     * 不经过此装饰器，调用行为零改动。
+     *
+     * 同时清洗请求体：Grok CLI 代理只允许 user 角色的消息携带 name 字段（其余角色
+     * 带 name 直接返回 400 invalid-argument），而 agentscope 的 OpenAI 格式化器会为
+     * 带名字的系统消息透传 name。这里统一为非 user 消息去掉 name（name 仅为可选
+     * 元数据，去除不影响语义），Copilot 等其他订阅厂商对此同样兼容。
+     */
+    private static final class HeaderInjectingTransport implements HttpTransport {
+        private final HttpTransport delegate;
+        private final Map<String, String> extraHeaders;
+        private final ObjectMapper objectMapper;
+
+        HeaderInjectingTransport(HttpTransport delegate, Map<String, String> extraHeaders,
+                                 ObjectMapper objectMapper) {
+            this.delegate = delegate;
+            this.extraHeaders = extraHeaders;
+            this.objectMapper = objectMapper;
+        }
+
+        private HttpRequest apply(HttpRequest request) {
+            // 订阅厂商下游端点追踪：便于用日志确证每次推理实际命中的 Base URL
+            log.info("[订阅厂商透传] {} {}", request.getMethod(), request.getUrl());
+            HttpRequest.Builder builder = HttpRequest.builder()
+                    .url(request.getUrl())
+                    .method(request.getMethod())
+                    .headers(request.getHeaders())
+                    .body(stripNonUserNameFields(request.getBody()));
+            extraHeaders.forEach(builder::header);
+            return builder.build();
+        }
+
+        /** 非 user 角色消息移除 name 字段；请求体不是合法 JSON 或无需修改时原样返回。 */
+        private String stripNonUserNameFields(String body) {
+            if (body == null || !body.contains("\"messages\"")) {
+                return body;
+            }
+            try {
+                JsonNode root = objectMapper.readTree(body);
+                JsonNode messages = root.get("messages");
+                if (messages != null && messages.isArray()) {
+                    boolean changed = false;
+                    for (JsonNode msg : messages) {
+                        if (!"user".equals(msg.path("role").asText()) && msg.has("name")) {
+                            ((ObjectNode) msg).remove("name");
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        return objectMapper.writeValueAsString(root);
+                    }
+                }
+                return body;
+            } catch (Exception e) {
+                // 清洗失败不影响调用本身：按原请求体透传
+                return body;
+            }
+        }
+
+        @Override
+        public HttpResponse execute(HttpRequest request) throws HttpTransportException {
+            return delegate.execute(apply(request));
+        }
+
+        @Override
+        public reactor.core.publisher.Flux<String> stream(HttpRequest request) {
+            return delegate.stream(apply(request));
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
     }
 }

@@ -37,6 +37,12 @@ public class AgentscopeProperties {
     /** DeepWiki MCP 服务器地址（为空则不启用）。 */
     private String mcpDeepwikiUrl = "https://mcp.deepwiki.com/mcp";
 
+    /** Google 订阅登录 OAuth 客户端 ID（gemini-cli installed-app 客户端；默认值见 application.yml）。 */
+    private String oauthGoogleClientId = "";
+
+    /** Google 订阅登录 OAuth 客户端 Secret（仅回环授权码交换使用；默认值见 application.yml）。 */
+    private String oauthGoogleClientSecret = "";
+
     /**
      * agent-desktop MCP（Computer Use 电脑桌面自动化）是否启用。
      * 默认关闭：需在设置面板「电脑」页显式开启（运行时切换会持久化到 .data/settings.json）。
@@ -122,6 +128,22 @@ public class AgentscopeProperties {
 
     public void setMcpDeepwikiUrl(String mcpDeepwikiUrl) {
         this.mcpDeepwikiUrl = mcpDeepwikiUrl;
+    }
+
+    public String getOauthGoogleClientId() {
+        return oauthGoogleClientId;
+    }
+
+    public void setOauthGoogleClientId(String oauthGoogleClientId) {
+        this.oauthGoogleClientId = oauthGoogleClientId;
+    }
+
+    public String getOauthGoogleClientSecret() {
+        return oauthGoogleClientSecret;
+    }
+
+    public void setOauthGoogleClientSecret(String oauthGoogleClientSecret) {
+        this.oauthGoogleClientSecret = oauthGoogleClientSecret;
     }
 
     public boolean isMcpAgentDesktopEnabled() {
