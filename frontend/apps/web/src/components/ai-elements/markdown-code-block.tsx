@@ -10,7 +10,7 @@
  * 5. 拦截 Mermaid 图表语言，自动渲染高交互的 DiagramViewer 图表卡片
  */
 
-import { memo, type ComponentProps } from "react";
+import { isValidElement, memo, type ComponentProps, type ReactNode } from "react";
 import type { BundledLanguage } from "shiki";
 import {
   CodeBlock,
@@ -29,19 +29,52 @@ interface MarkdownCodeBlockProps extends ComponentProps<"code"> {
   inline?: boolean;
 }
 
+function extractPlainText(content: ReactNode): string {
+  if (typeof content === "string" || typeof content === "number") {
+    return String(content);
+  }
+  if (Array.isArray(content)) {
+    return content.map(extractPlainText).join("");
+  }
+  if (isValidElement<{ children?: ReactNode }>(content)) {
+    return extractPlainText(content.props.children);
+  }
+  return "";
+}
+
+function areMarkdownCodeBlockPropsEqual(
+  prev: MarkdownCodeBlockProps,
+  next: MarkdownCodeBlockProps
+): boolean {
+  if (
+    prev.className !== next.className ||
+    prev.inline !== next.inline ||
+    prev.children !== next.children
+  ) {
+    return false;
+  }
+  const prevKeys = Object.keys(prev) as (keyof MarkdownCodeBlockProps)[];
+  const nextKeys = Object.keys(next) as (keyof MarkdownCodeBlockProps)[];
+  for (const key of prevKeys) {
+    if (key === "node" || key === "className" || key === "inline" || key === "children") continue;
+    if (!Object.is(prev[key], next[key])) return false;
+  }
+  for (const key of nextKeys) {
+    if (key === "node" || key === "className" || key === "inline" || key === "children") continue;
+    if (!Object.is(prev[key], next[key])) return false;
+  }
+  return true;
+}
+
 export const MarkdownCodeBlock = memo(function MarkdownCodeBlock({
   className,
   children,
   inline,
-  node,
+  node: _node,
   ...props
 }: MarkdownCodeBlockProps) {
   // 提取纯文本内容
-  const rawContent = typeof children === "string"
-    ? children
-    : Array.isArray(children)
-      ? children.map((c) => (typeof c === "string" ? c : "")).join("")
-      : String(children ?? "");
+  const rawContent = extractPlainText(children);
 
   // 判断是否为行内代码：
   // 1. 显式带有 inline 属性
@@ -101,6 +134,6 @@ export const MarkdownCodeBlock = memo(function MarkdownCodeBlock({
       </CodeBlock>
     </div>
   );
-});
+}, areMarkdownCodeBlockPropsEqual);
 
 MarkdownCodeBlock.displayName = "MarkdownCodeBlock";

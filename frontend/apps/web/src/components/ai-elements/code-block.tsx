@@ -27,7 +27,11 @@ import type {
   HighlighterGeneric,
   ThemedToken,
 } from "shiki";
-import { createHighlighter } from "shiki";
+import {
+  bundledLanguages,
+  bundledLanguagesAlias,
+  createHighlighter,
+} from "shiki";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -129,16 +133,25 @@ const CodeBlockContext = createContext<CodeBlockContextType>({
   code: "",
 });
 
-// Highlighter cache (singleton per language)
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->();
+// Shared singleton highlighter & incremental language state
+let sharedHighlighter: HighlighterGeneric<BundledLanguage, BundledTheme> | null =
+  null;
+let highlighterInitPromise: Promise<
+  HighlighterGeneric<BundledLanguage, BundledTheme>
+> | null = null;
+const loadedLanguages = new Set<string>();
+const failedLanguages = new Set<string>();
+const languageLoadPromises = new Map<string, Promise<void>>();
 
-// Token cache
-const tokensCache = new Map<string, TokenizedCode>();
+// Bounded LRU token cache with exact-string collision guard
+interface TokensCacheEntry {
+  code: string;
+  tokenized: TokenizedCode;
+}
+const MAX_TOKENS_CACHE_SIZE = 200;
+const tokensCache = new Map<string, TokensCacheEntry>();
 
-// Subscribers for async token updates
+// Subscribers for async token updates (used by highlightCode callback API)
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
 
 const LANGUAGE_ALIASES: Record<string, BundledLanguage | "text"> = {
@@ -193,44 +206,143 @@ const LANGUAGE_ALIASES: Record<string, BundledLanguage | "text"> = {
   text: "text",
   txt: "text",
   plaintext: "text",
+  plain: "text",
 };
 
 export const normalizeLanguage = (rawLang?: string): BundledLanguage => {
   if (!rawLang || typeof rawLang !== "string") return "text" as BundledLanguage;
   const clean = rawLang.trim().toLowerCase();
-  return (LANGUAGE_ALIASES[clean] ?? "text") as BundledLanguage;
+  if (!clean) return "text" as BundledLanguage;
+  const aliased = LANGUAGE_ALIASES[clean];
+  if (aliased) {
+    return aliased as BundledLanguage;
+  }
+  if (
+    Object.hasOwn(bundledLanguages, clean) ||
+    Object.hasOwn(bundledLanguagesAlias, clean)
+  ) {
+    return clean as BundledLanguage;
+  }
+  return "text" as BundledLanguage;
+};
+
+const hashCodeString = (str: string): string => {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < str.length; i += 1) {
+    const ch = str.charCodeAt(i);
+    h1 ^= ch;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= ch + i;
+    h2 = Math.imul(h2, 0x85ebca6b);
+  }
+  return `${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
 };
 
 const getTokensCacheKey = (code: string, language: BundledLanguage) => {
   const safeLang = normalizeLanguage(language);
-  const start = code.slice(0, 100);
-  const end = code.length > 100 ? code.slice(-100) : "";
-  return `${safeLang}:${code.length}:${start}:${end}`;
+  return `${safeLang}:${code.length}:${hashCodeString(code)}`;
 };
 
-const getHighlighter = (
-  language: BundledLanguage
-): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const safeLang = normalizeLanguage(language);
-  const cached = highlighterCache.get(safeLang);
-  if (cached) {
-    return cached;
+const getCachedTokens = (
+  code: string,
+  cacheKey: string
+): TokenizedCode | null => {
+  const entry = tokensCache.get(cacheKey);
+  if (!entry || entry.code !== code) {
+    return null;
   }
+  // Refresh LRU order
+  tokensCache.delete(cacheKey);
+  tokensCache.set(cacheKey, entry);
+  return entry.tokenized;
+};
 
-  const langsToLoad = safeLang === ("text" as BundledLanguage) ? [] : [safeLang];
+const setCachedTokens = (
+  code: string,
+  cacheKey: string,
+  tokenized: TokenizedCode
+): void => {
+  tokensCache.delete(cacheKey);
+  if (tokensCache.size >= MAX_TOKENS_CACHE_SIZE) {
+    const oldestKey = tokensCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      tokensCache.delete(oldestKey);
+    }
+  }
+  tokensCache.set(cacheKey, { code, tokenized });
+};
 
-  const highlighterPromise = createHighlighter({
-    langs: langsToLoad,
-    themes: ["github-light", "github-dark"],
-  }).catch(() => {
-    return createHighlighter({
+const getSharedHighlighter = (): Promise<
+  HighlighterGeneric<BundledLanguage, BundledTheme>
+> => {
+  if (sharedHighlighter) {
+    return Promise.resolve(sharedHighlighter);
+  }
+  if (!highlighterInitPromise) {
+    highlighterInitPromise = createHighlighter({
       langs: [],
       themes: ["github-light", "github-dark"],
-    });
-  });
+    })
+      .then((highlighter) => {
+        sharedHighlighter = highlighter;
+        for (const lang of highlighter.getLoadedLanguages()) {
+          loadedLanguages.add(lang);
+        }
+        return highlighter;
+      })
+      .catch((error) => {
+        highlighterInitPromise = null;
+        throw error;
+      });
+  }
+  return highlighterInitPromise;
+};
 
-  highlighterCache.set(safeLang, highlighterPromise);
-  return highlighterPromise;
+const isLanguageReadySync = (safeLang: BundledLanguage): boolean => {
+  if ((safeLang as string) === "text") return true;
+  if (failedLanguages.has(safeLang)) return true;
+  if (!sharedHighlighter) return false;
+  return (
+    loadedLanguages.has(safeLang) ||
+    sharedHighlighter.getLoadedLanguages().includes(safeLang)
+  );
+};
+
+const ensureLanguageLoaded = (safeLang: BundledLanguage): Promise<void> => {
+  if (isLanguageReadySync(safeLang)) {
+    return Promise.resolve();
+  }
+  const existing = languageLoadPromises.get(safeLang);
+  if (existing) {
+    return existing;
+  }
+
+  const loadPromise = getSharedHighlighter()
+    .then(async (highlighter) => {
+      if ((safeLang as string) === "text") {
+        return;
+      }
+      if (!highlighter.getLoadedLanguages().includes(safeLang)) {
+        try {
+          await highlighter.loadLanguage(safeLang);
+        } catch (error) {
+          console.error(`Failed to load shiki language "${safeLang}":`, error);
+          failedLanguages.add(safeLang);
+          return;
+        }
+      }
+      loadedLanguages.add(safeLang);
+      for (const lang of highlighter.getLoadedLanguages()) {
+        loadedLanguages.add(lang);
+      }
+    })
+    .finally(() => {
+      languageLoadPromises.delete(safeLang);
+    });
+
+  languageLoadPromises.set(safeLang, loadPromise);
+  return loadPromise;
 };
 
 // Create raw tokens for immediate display while highlighting loads
@@ -249,6 +361,45 @@ const createRawTokens = (code: string): TokenizedCode => ({
   ),
 });
 
+const tokenizeWithHighlighterSync = (
+  code: string,
+  safeLang: BundledLanguage
+): TokenizedCode | null => {
+  const tokensCacheKey = getTokensCacheKey(code, safeLang);
+  const cached = getCachedTokens(code, tokensCacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  if ((safeLang as string) === "text" || failedLanguages.has(safeLang)) {
+    const raw = createRawTokens(code);
+    setCachedTokens(code, tokensCacheKey, raw);
+    return raw;
+  }
+
+  if (!sharedHighlighter || !isLanguageReadySync(safeLang)) {
+    return null;
+  }
+
+  const availableLangs = sharedHighlighter.getLoadedLanguages();
+  const langToUse = availableLangs.includes(safeLang) ? safeLang : "text";
+  const result = sharedHighlighter.codeToTokens(code, {
+    lang: langToUse,
+    themes: {
+      dark: "github-dark",
+      light: "github-light",
+    },
+  });
+
+  const tokenized: TokenizedCode = {
+    bg: result.bg ?? "transparent",
+    fg: result.fg ?? "inherit",
+    tokens: result.tokens,
+  };
+  setCachedTokens(code, tokensCacheKey, tokenized);
+  return tokenized;
+};
+
 // Synchronous highlight with callback for async results
 export const highlightCode = (
   code: string,
@@ -256,13 +407,15 @@ export const highlightCode = (
   // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-callbacks)
   callback?: (result: TokenizedCode) => void
 ): TokenizedCode | null => {
-  const tokensCacheKey = getTokensCacheKey(code, language);
+  const safeLang = normalizeLanguage(language);
 
-  // Return cached result if available
-  const cached = tokensCache.get(tokensCacheKey);
-  if (cached) {
-    return cached;
+  // Return cached / synchronously highlighted result if language is ready
+  const syncResult = tokenizeWithHighlighterSync(code, safeLang);
+  if (syncResult) {
+    return syncResult;
   }
+
+  const tokensCacheKey = getTokensCacheKey(code, safeLang);
 
   // Subscribe callback if provided
   if (callback) {
@@ -272,37 +425,19 @@ export const highlightCode = (
     subscribers.get(tokensCacheKey)?.add(callback);
   }
 
-  // Start highlighting in background - fire-and-forget async pattern
-  getHighlighter(language)
+  // Load language grammar into the shared highlighter once, then notify subscribers
+  void ensureLanguageLoaded(safeLang)
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
-    .then((highlighter) => {
-      const availableLangs = highlighter.getLoadedLanguages();
-      const langToUse = availableLangs.includes(language) ? language : "text";
+    .then(() => {
+      const tokenized =
+        tokenizeWithHighlighterSync(code, safeLang) ?? createRawTokens(code);
 
-      const result = highlighter.codeToTokens(code, {
-        lang: langToUse,
-        themes: {
-          dark: "github-dark",
-          light: "github-light",
-        },
-      });
-
-      const tokenized: TokenizedCode = {
-        bg: result.bg ?? "transparent",
-        fg: result.fg ?? "inherit",
-        tokens: result.tokens,
-      };
-
-      // Cache the result
-      tokensCache.set(tokensCacheKey, tokenized);
-
-      // Notify all subscribers
       const subs = subscribers.get(tokensCacheKey);
       if (subs) {
+        subscribers.delete(tokensCacheKey);
         for (const sub of subs) {
           sub(tokenized);
         }
-        subscribers.delete(tokensCacheKey);
       }
     })
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then), eslint-plugin-promise(prefer-await-to-callbacks)
@@ -440,43 +575,62 @@ export const CodeBlockContent = ({
   language: BundledLanguage;
   showLineNumbers?: boolean;
 }) => {
-  // Memoized raw tokens for immediate display
-  const rawTokens = useMemo(() => createRawTokens(code), [code]);
+  const safeLang = useMemo(() => normalizeLanguage(language), [language]);
 
-  // Synchronous cache lookup — avoids setState in effect for cached results
+  // Pure synchronous highlighting whenever cache hits or shared Shiki grammar is loaded
   const syncTokens = useMemo(
-    () => highlightCode(code, language) ?? rawTokens,
-    [code, language, rawTokens]
+    () => tokenizeWithHighlighterSync(code, safeLang),
+    [code, safeLang]
   );
 
-  // Async highlighting result (populated after shiki loads)
-  const [asyncTokens, setAsyncTokens] = useState<TokenizedCode | null>(null);
-  const asyncKeyRef = useRef({ code, language });
-
-  // Invalidate stale async tokens synchronously during render
-  if (
-    asyncKeyRef.current.code !== code ||
-    asyncKeyRef.current.language !== language
-  ) {
-    asyncKeyRef.current = { code, language };
-    setAsyncTokens(null);
-  }
+  // Async highlighting result keyed to (code, safeLang) so stale results never apply
+  const [asyncResult, setAsyncResult] = useState<{
+    code: string;
+    safeLang: BundledLanguage;
+    tokenized: TokenizedCode;
+  } | null>(null);
 
   useEffect(() => {
+    if (syncTokens) {
+      return;
+    }
+
     let cancelled = false;
 
-    highlightCode(code, language, (result) => {
-      if (!cancelled) {
-        setAsyncTokens(result);
-      }
-    });
+    void ensureLanguageLoaded(safeLang)
+      // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+        const tokenized =
+          tokenizeWithHighlighterSync(code, safeLang) ?? createRawTokens(code);
+        setAsyncResult({ code, safeLang, tokenized });
+      })
+      // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
+      .catch((error) => {
+        console.error("Failed to highlight code:", error);
+        if (!cancelled) {
+          setAsyncResult({ code, safeLang, tokenized: createRawTokens(code) });
+        }
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [code, safeLang, syncTokens]);
 
-  const tokenized = asyncTokens ?? syncTokens;
+  const matchedAsyncTokens =
+    asyncResult &&
+    asyncResult.code === code &&
+    asyncResult.safeLang === safeLang
+      ? asyncResult.tokenized
+      : null;
+
+  const tokenized = useMemo(
+    () => syncTokens ?? matchedAsyncTokens ?? createRawTokens(code),
+    [code, syncTokens, matchedAsyncTokens]
+  );
 
   return (
     <div className="relative overflow-auto">
